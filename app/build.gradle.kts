@@ -118,4 +118,5 @@ dependencies {
     implementation(libs.timber.logging)
 
     testImplementation(kotlin("test"))
+    testImplementation("junit:junit:4.13.2")
 }

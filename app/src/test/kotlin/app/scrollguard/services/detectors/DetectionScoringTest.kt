@@ -7,9 +7,9 @@
 
 package app.scrollguard.services.detectors
 
-import kotlin.test.Test
 import kotlin.test.assertEquals
 import kotlin.test.assertTrue
+import org.junit.Test
 
 class DetectionScoringTest {
     @Test
