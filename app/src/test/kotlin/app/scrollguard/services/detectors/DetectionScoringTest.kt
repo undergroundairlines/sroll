@@ -65,4 +65,20 @@ class DetectionScoringTest {
 
         assertEquals(7, result.score)
     }
+
+    @Test
+    fun selectedHomeTabOverridesPreloadedReelsSignals() {
+        val result = scoreInstagram(
+            InstagramSignals(
+                viewerId = true,
+                reelIds = true,
+                reelsControls = true,
+                verticalPager = true,
+                homeTabSelected = true,
+                normalScreenId = true,
+            ),
+        )
+
+        assertTrue(result.score < 7)
+    }
 }

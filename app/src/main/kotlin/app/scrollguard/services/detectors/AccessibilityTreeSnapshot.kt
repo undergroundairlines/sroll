@@ -30,8 +30,14 @@ internal class AccessibilityTreeSnapshot private constructor(
         fragments.any { fragment -> node.id.contains(fragment.normalized()) }
     }
 
+    fun hasVisibleId(vararg fragments: String): Boolean = nodes.any { node ->
+        node.visible && fragments.any { fragment -> node.id.contains(fragment.normalized()) }
+    }
+
     fun hasSelectedId(vararg fragments: String): Boolean = nodes.any { node ->
-        node.selected && fragments.any { fragment -> node.id.contains(fragment.normalized()) }
+        node.visible && node.selected && fragments.any { fragment ->
+            node.id.contains(fragment.normalized())
+        }
     }
 
     fun hasLabel(vararg fragments: String): Boolean = nodes.any { node ->
@@ -39,7 +45,9 @@ internal class AccessibilityTreeSnapshot private constructor(
     }
 
     fun hasSelectedLabel(vararg fragments: String): Boolean = nodes.any { node ->
-        node.selected && fragments.any { fragment -> node.label.contains(fragment.normalized()) }
+        node.visible && node.selected && fragments.any { fragment ->
+            node.label.contains(fragment.normalized())
+        }
     }
 
     fun labelGroupCount(vararg groups: Set<String>): Int = groups.count { group ->

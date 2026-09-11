@@ -51,11 +51,19 @@ class InstagramReelsDetector : ShortFormContentDetector {
             InstagramSignals(
                 selectedTabId = tree.hasSelectedId("clips_tab", "reels_tab"),
                 selectedTabLabel = tree.hasSelectedLabel("reels"),
-                viewerId = tree.hasId("clips_viewer", "reels_viewer", "reel_viewer"),
-                reelIds = tree.hasId("clips_", "reel_"),
+                viewerId = tree.hasVisibleId("clips_viewer", "reels_viewer", "reel_viewer"),
+                reelIds = tree.hasVisibleId("clips_", "reel_"),
                 reelsControls = controlCount >= 3,
                 verticalPager = tree.hasTallScrollableNode(),
-                normalScreenId = tree.hasId("direct_inbox", "inbox", "profile_tab"),
+                homeTabSelected = tree.hasSelectedId("feed_tab", "home_tab") ||
+                    tree.hasSelectedLabel("home"),
+                normalScreenId = tree.hasVisibleId(
+                    "direct_inbox",
+                    "inbox",
+                    "profile_tab",
+                    "feed_tab",
+                    "home_tab",
+                ),
                 normalScreenLabel = tree.hasLabel("new message", "edit profile"),
             ),
         )
