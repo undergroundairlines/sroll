@@ -25,8 +25,8 @@ import timber.log.Timber
 /**
  * Detector for Instagram Reels short-form content.
  *
- * Combines selected Reels navigation, viewer IDs, control groups, and layout shape. Normal inbox
- * and profile signals lower weak scores to avoid the original detector's fullscreen false positives.
+ * Combines selected Reels navigation, viewer IDs, control groups, and layout shape. Instagram's
+ * legacy "reel" identifiers refer to Stories, so those are explicitly excluded.
  */
 class InstagramReelsDetector : ShortFormContentDetector {
 
@@ -51,10 +51,15 @@ class InstagramReelsDetector : ShortFormContentDetector {
             InstagramSignals(
                 selectedTabId = tree.hasSelectedId("clips_tab", "reels_tab"),
                 selectedTabLabel = tree.hasSelectedLabel("reels"),
-                viewerId = tree.hasVisibleId("clips_viewer", "reels_viewer", "reel_viewer"),
-                reelIds = tree.hasVisibleId("clips_", "reel_"),
+                viewerId = tree.hasVisibleId("clips_viewer", "reels_viewer"),
+                reelIds = tree.hasVisibleId("clips_", "reels_"),
                 reelsControls = controlCount >= 3,
                 verticalPager = tree.hasTallScrollableNode(),
+                storyViewer = tree.hasVisibleId(
+                    "story_viewer",
+                    "stories_viewer",
+                    "reel_viewer",
+                ),
                 homeTabSelected = tree.hasSelectedId("feed_tab", "home_tab") ||
                     tree.hasSelectedLabel("home"),
                 normalScreenId = tree.hasVisibleId(

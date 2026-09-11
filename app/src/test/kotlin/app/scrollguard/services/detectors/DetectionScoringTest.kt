@@ -81,4 +81,18 @@ class DetectionScoringTest {
 
         assertTrue(result.score < 7)
     }
+
+    @Test
+    fun storyViewerOverridesSharedMediaControls() {
+        val result = scoreInstagram(
+            InstagramSignals(
+                reelIds = true,
+                reelsControls = true,
+                verticalPager = true,
+                storyViewer = true,
+            ),
+        )
+
+        assertTrue(result.score < 7)
+    }
 }

@@ -41,6 +41,7 @@ internal data class InstagramSignals(
     val reelIds: Boolean = false,
     val reelsControls: Boolean = false,
     val verticalPager: Boolean = false,
+    val storyViewer: Boolean = false,
     val homeTabSelected: Boolean = false,
     val normalScreenId: Boolean = false,
     val normalScreenLabel: Boolean = false,
@@ -53,6 +54,7 @@ internal fun scoreInstagram(signals: InstagramSignals): ScoredSignals = buildSco
     addIf(signals.reelIds, 2, "Reel interface identifiers")
     addIf(signals.reelsControls, 3, "Reels control group")
     addIf(signals.verticalPager, 1, "Vertical media pager")
+    subtractIf(signals.storyViewer, 10)
     subtractIf(signals.homeTabSelected, 10)
     subtractIf(signals.normalScreenId && score < 7, 5)
     subtractIf(signals.normalScreenLabel && score < 7, 5)
