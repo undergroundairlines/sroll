@@ -55,6 +55,7 @@ import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.graphics.ImageBitmap
 import androidx.compose.ui.graphics.asImageBitmap
+import androidx.compose.ui.platform.LocalConfiguration
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextAlign
@@ -71,7 +72,6 @@ import app.scrollguard.ui.viewmodels.ScreenTimeState
 import app.scrollguard.utils.ScreenTimeFormatting
 import java.text.SimpleDateFormat
 import java.util.Date
-import java.util.Locale
 import kotlin.math.abs
 
 @Composable
@@ -237,7 +237,8 @@ private fun UsageSummary(report: ScreenTimeReport) {
         )
     }
     if (report.period == UsagePeriod.ALL) {
-        val date = SimpleDateFormat("d MMM yyyy", Locale.getDefault())
+        val locale = LocalConfiguration.current.locales[0]
+        val date = SimpleDateFormat("d MMM yyyy", locale)
             .format(Date(report.trackingSinceMillis))
         Text(
             text = "Recorded history since $date",
