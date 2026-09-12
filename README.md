@@ -18,6 +18,8 @@ privacy configuration, visual theme, application identity, and TikTok support ha
 - Exact event-based screen-time dashboard with Day, Week, Month and All Time views
 - Hourly, daily and monthly usage charts that reconcile with the displayed total
 - Per-app detail pages, percentages, screen-on time and pickup counts
+- Impact report comparing daily phone and per-app use against the seven days before installation
+- Estimated time saved and percentage change since Scroll Guard was enabled
 - Private daily archive that preserves all-time history after Android prunes old events
 - Small and wide home-screen widgets showing today’s total and percentage change
 - Wide widget includes the top three apps with readable time and percentage values
