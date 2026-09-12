@@ -31,7 +31,7 @@ plugins {
 extensions.configure<ApplicationExtension> {
     // ... Application Version ...
     val majorUpdateVersion = 0
-    val minorUpdateVersion = 2
+    val minorUpdateVersion = 3
     val patchVersion = 0
 
     val mVersionCode = majorUpdateVersion.times(10_000)
@@ -114,6 +114,7 @@ dependencies {
 
     implementation(libs.androidx.dataStore.core)
     implementation(libs.androidx.dataStore.preferences)
+    implementation(libs.androidx.work.runtime)
 
     implementation(libs.timber.logging)
 

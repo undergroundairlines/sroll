@@ -7,18 +7,19 @@
 
 package app.scrollguard.models
 
-enum class UsagePeriod { DAY, WEEK }
+enum class UsagePeriod { DAY, WEEK, MONTH, ALL }
+
+data class UsageBucket(
+    val label: String,
+    val durationMillis: Long,
+)
 
 data class AppUsage(
     val packageName: String,
     val displayName: String,
     val durationMillis: Long,
     val percentage: Int,
-)
-
-data class DailyUsage(
-    val dayLabel: String,
-    val durationMillis: Long,
+    val buckets: List<UsageBucket> = emptyList(),
 )
 
 data class ScreenTimeReport(
@@ -27,5 +28,9 @@ data class ScreenTimeReport(
     val previousTotalMillis: Long,
     val changePercentage: Int?,
     val apps: List<AppUsage>,
-    val lastSevenDays: List<DailyUsage>,
+    val usageBuckets: List<UsageBucket>,
+    val chartTitle: String,
+    val screenOnMillis: Long,
+    val pickups: Int,
+    val trackingSinceMillis: Long,
 )

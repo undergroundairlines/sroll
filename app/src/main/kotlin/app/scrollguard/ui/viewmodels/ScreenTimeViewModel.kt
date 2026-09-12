@@ -15,6 +15,7 @@ import app.scrollguard.models.UsagePeriod
 import app.scrollguard.services.ScreenTimeRepository
 import app.scrollguard.widgets.ScreenTimeWidgetUpdater
 import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.Job
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
@@ -34,6 +35,7 @@ class ScreenTimeViewModel(application: Application) : AndroidViewModel(applicati
     private val repository = ScreenTimeRepository(application)
     private val _state = MutableStateFlow(ScreenTimeState())
     val state: StateFlow<ScreenTimeState> = _state.asStateFlow()
+    private var refreshJob: Job? = null
 
     init {
         refresh()
@@ -41,7 +43,7 @@ class ScreenTimeViewModel(application: Application) : AndroidViewModel(applicati
 
     fun setPeriod(period: UsagePeriod) {
         if (_state.value.selectedPeriod == period) return
-        _state.update { it.copy(selectedPeriod = period) }
+        _state.update { it.copy(selectedPeriod = period, report = null) }
         refresh()
     }
 
@@ -56,7 +58,8 @@ class ScreenTimeViewModel(application: Application) : AndroidViewModel(applicati
         }
         if (!hasAccess) return
 
-        viewModelScope.launch {
+        refreshJob?.cancel()
+        refreshJob = viewModelScope.launch {
             try {
                 val report = withContext(Dispatchers.IO) {
                     repository.load(_state.value.selectedPeriod)

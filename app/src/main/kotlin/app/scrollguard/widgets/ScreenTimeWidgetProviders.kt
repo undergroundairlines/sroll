@@ -29,13 +29,27 @@ import kotlin.math.abs
 
 class SmallScreenTimeWidgetProvider : AppWidgetProvider() {
     override fun onUpdate(context: Context, manager: AppWidgetManager, appWidgetIds: IntArray) {
-        ScreenTimeWidgetUpdater.update(context, manager, appWidgetIds, wide = false)
+        val pendingResult = goAsync()
+        ScreenTimeWidgetUpdater.update(
+            context,
+            manager,
+            appWidgetIds,
+            wide = false,
+            onFinished = pendingResult::finish,
+        )
     }
 }
 
 class WideScreenTimeWidgetProvider : AppWidgetProvider() {
     override fun onUpdate(context: Context, manager: AppWidgetManager, appWidgetIds: IntArray) {
-        ScreenTimeWidgetUpdater.update(context, manager, appWidgetIds, wide = true)
+        val pendingResult = goAsync()
+        ScreenTimeWidgetUpdater.update(
+            context,
+            manager,
+            appWidgetIds,
+            wide = true,
+            onFinished = pendingResult::finish,
+        )
     }
 }
 
@@ -63,35 +77,50 @@ object ScreenTimeWidgetUpdater {
         manager: AppWidgetManager,
         appWidgetIds: IntArray,
         wide: Boolean,
+        onFinished: () -> Unit = {},
     ) {
-        if (appWidgetIds.isEmpty()) return
+        if (appWidgetIds.isEmpty()) {
+            onFinished()
+            return
+        }
         val appContext = context.applicationContext
         scope.launch {
-            val repository = ScreenTimeRepository(appContext)
-            val report = if (repository.hasUsageAccess()) {
-                runCatching { repository.load(UsagePeriod.DAY) }.getOrNull()
-            } else {
-                null
-            }
-
-            appWidgetIds.forEach { widgetId ->
-                val layout = if (wide) R.layout.widget_screen_time_wide else R.layout.widget_screen_time_small
-                val views = RemoteViews(appContext.packageName, layout)
-                views.setOnClickPendingIntent(R.id.widget_root, openAppIntent(appContext))
-
-                if (report == null) {
-                    views.setTextViewText(R.id.widget_total, "Tap to set up")
-                    views.setTextViewText(R.id.widget_change, "Usage Access needed")
-                    if (wide) setWideApps(views, emptyList())
+            try {
+                val repository = ScreenTimeRepository(appContext)
+                val report = if (repository.hasUsageAccess()) {
+                    runCatching { repository.load(UsagePeriod.DAY) }.getOrNull()
                 } else {
-                    views.setTextViewText(
-                        R.id.widget_total,
-                        ScreenTimeFormatting.duration(report.totalMillis),
-                    )
-                    views.setTextViewText(R.id.widget_change, widgetComparison(report.changePercentage))
-                    if (wide) setWideApps(views, report.apps.take(3))
+                    null
                 }
-                manager.updateAppWidget(widgetId, views)
+
+                appWidgetIds.forEach { widgetId ->
+                    val layout = if (wide) {
+                        R.layout.widget_screen_time_wide
+                    } else {
+                        R.layout.widget_screen_time_small
+                    }
+                    val views = RemoteViews(appContext.packageName, layout)
+                    views.setOnClickPendingIntent(R.id.widget_root, openAppIntent(appContext))
+
+                    if (report == null) {
+                        views.setTextViewText(R.id.widget_total, "Tap to set up")
+                        views.setTextViewText(R.id.widget_change, "Usage Access needed")
+                        if (wide) setWideApps(views, emptyList())
+                    } else {
+                        views.setTextViewText(
+                            R.id.widget_total,
+                            ScreenTimeFormatting.duration(report.totalMillis),
+                        )
+                        views.setTextViewText(
+                            R.id.widget_change,
+                            widgetComparison(report.changePercentage),
+                        )
+                        if (wide) setWideApps(views, report.apps.take(3))
+                    }
+                    manager.updateAppWidget(widgetId, views)
+                }
+            } finally {
+                onFinished()
             }
         }
     }

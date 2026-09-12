@@ -7,6 +7,7 @@ activityCompose = "1.13.0"
 composeBom = "2026.08.00"
 material3Expressive = "1.5.0-alpha25"
 androidxDataStore = "1.2.1"
+androidxWork = "2.11.0"
 timber = "5.0.1"
 
 [libraries]
@@ -23,6 +24,7 @@ androidx-compose-material3 = { group = "androidx.compose.material3", name = "mat
 androidx-compose-material-icons = { group = "androidx.compose.material", name = "material-icons-core" }
 androidx-dataStore-core = { group = "androidx.datastore", name = "datastore", version.ref = "androidxDataStore" }
 androidx-dataStore-preferences = { group = "androidx.datastore", name = "datastore-preferences", version.ref = "androidxDataStore" }
+androidx-work-runtime = { group = "androidx.work", name = "work-runtime-ktx", version.ref = "androidxWork" }
 timber-logging = { group = "com.jakewharton.timber", name = "timber", version.ref = "timber" }
 
 [plugins]
