@@ -95,7 +95,7 @@ class ScreenTimeRepository(private val context: Context) {
         return usageStatsManager.queryAndAggregateUsageStats(startMillis, endMillis)
             .asSequence()
             .filter { (packageName, stats) ->
-                packageName !in excludedPackages && stats.totalTimeInForeground >= 60_000L
+                packageName !in excludedPackages && stats.totalTimeInForeground > 0L
             }
             .associate { (packageName, stats) -> packageName to stats.totalTimeInForeground }
     }
