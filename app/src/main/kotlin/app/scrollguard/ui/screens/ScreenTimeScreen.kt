@@ -62,8 +62,10 @@ import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import androidx.core.graphics.drawable.toBitmap
+import app.scrollguard.models.AppImpact
 import app.scrollguard.models.AppUsage
 import app.scrollguard.models.ScreenTimeReport
+import app.scrollguard.models.ScreenTimeImpact
 import app.scrollguard.models.UsageBucket
 import app.scrollguard.models.UsagePeriod
 import app.scrollguard.ui.components.AppSection
@@ -212,11 +214,155 @@ private fun ScreenTimeDashboard(
 
     UsageSummary(report)
     Spacer(modifier = Modifier.height(14.dp))
+    report.impact?.let { impact ->
+        ImpactSection(impact)
+        Spacer(modifier = Modifier.height(14.dp))
+    }
     UsageBarChart(report.usageBuckets, report.chartTitle)
     Spacer(modifier = Modifier.height(14.dp))
     AppBreakdown(report.apps, report.totalMillis, onAppSelected)
 
     TextButton(onClick = onRefresh) { Text("Refresh exact data") }
+}
+
+@Composable
+private fun ImpactSection(impact: ScreenTimeImpact) {
+    var showAllApps by rememberSaveable { mutableStateOf(false) }
+    val locale = LocalConfiguration.current.locales[0]
+    val started = SimpleDateFormat("EEE d MMM, h:mm a", locale)
+        .format(Date(impact.startedAtMillis))
+    val change = impact.changePercentage
+    val headline = when {
+        change == null -> "Building your comparison"
+        change < 0 -> "${abs(change)}% less phone time"
+        change > 0 -> "${abs(change)}% more phone time"
+        else -> "Phone time is unchanged"
+    }
+
+    Card(
+        modifier = Modifier.fillMaxWidth(),
+        colors = CardDefaults.cardColors(
+            containerColor = MaterialTheme.colorScheme.surfaceVariant,
+        ),
+    ) {
+        Column(modifier = Modifier.padding(18.dp)) {
+            Text(
+                text = "Since Scroll Guard",
+                style = MaterialTheme.typography.titleMedium,
+                fontWeight = FontWeight.Bold,
+            )
+            Text(
+                text = headline,
+                style = MaterialTheme.typography.headlineSmall,
+                fontWeight = FontWeight.Bold,
+                color = MaterialTheme.colorScheme.primary,
+                modifier = Modifier.padding(top = 6.dp),
+            )
+            Text(
+                text = if (impact.timeSavedMillis > 0L) {
+                    "${ScreenTimeFormatting.duration(impact.timeSavedMillis)} saved so far"
+                } else {
+                    "No time saved yet"
+                },
+                style = MaterialTheme.typography.bodyLarge,
+                color = MaterialTheme.colorScheme.onSurfaceVariant,
+            )
+
+            Spacer(modifier = Modifier.height(16.dp))
+            Row(
+                modifier = Modifier.fillMaxWidth(),
+                horizontalArrangement = Arrangement.spacedBy(10.dp),
+            ) {
+                ImpactMetric(
+                    label = "Before",
+                    value = "${ScreenTimeFormatting.duration(impact.beforeDailyMillis)}/day",
+                    modifier = Modifier.weight(1f),
+                )
+                ImpactMetric(
+                    label = "Since",
+                    value = "${ScreenTimeFormatting.duration(impact.sinceDailyMillis)}/day",
+                    modifier = Modifier.weight(1f),
+                )
+            }
+            Text(
+                text = "Compared with the ${impact.baselineDays} days before $started",
+                style = MaterialTheme.typography.bodySmall,
+                color = MaterialTheme.colorScheme.onSurfaceVariant,
+                modifier = Modifier.padding(top = 10.dp),
+            )
+
+            if (impact.apps.isNotEmpty()) {
+                Spacer(modifier = Modifier.height(18.dp))
+                Text(
+                    text = "Apps",
+                    style = MaterialTheme.typography.titleSmall,
+                    fontWeight = FontWeight.Bold,
+                )
+                val visibleApps = if (showAllApps) impact.apps else impact.apps.take(6)
+                visibleApps.forEach { app -> AppImpactRow(app) }
+                if (impact.apps.size > 6) {
+                    TextButton(onClick = { showAllApps = !showAllApps }) {
+                        Text(if (showAllApps) "Show less" else "Show all ${impact.apps.size} apps")
+                    }
+                }
+            }
+        }
+    }
+}
+
+@Composable
+private fun ImpactMetric(label: String, value: String, modifier: Modifier = Modifier) {
+    Column(
+        modifier = modifier
+            .clip(RoundedCornerShape(14.dp))
+            .background(MaterialTheme.colorScheme.surface)
+            .padding(12.dp),
+    ) {
+        Text(
+            text = label,
+            style = MaterialTheme.typography.bodySmall,
+            color = MaterialTheme.colorScheme.onSurfaceVariant,
+        )
+        Text(
+            text = value,
+            style = MaterialTheme.typography.titleMedium,
+            fontWeight = FontWeight.Bold,
+        )
+    }
+}
+
+@Composable
+private fun AppImpactRow(app: AppImpact) {
+    Row(
+        modifier = Modifier
+            .fillMaxWidth()
+            .padding(top = 14.dp),
+        verticalAlignment = Alignment.CenterVertically,
+    ) {
+        AppIcon(app.packageName, size = 38)
+        Spacer(modifier = Modifier.width(10.dp))
+        Column(modifier = Modifier.weight(1f)) {
+            Text(
+                text = app.displayName,
+                fontWeight = FontWeight.SemiBold,
+                maxLines = 1,
+                overflow = TextOverflow.Ellipsis,
+            )
+            Text(
+                text = "${ScreenTimeFormatting.duration(app.beforeDailyMillis)}/day  →  " +
+                    "${ScreenTimeFormatting.duration(app.sinceDailyMillis)}/day",
+                style = MaterialTheme.typography.bodySmall,
+                color = MaterialTheme.colorScheme.onSurfaceVariant,
+                maxLines = 1,
+            )
+        }
+        Text(
+            text = impactChangeLabel(app.changePercentage),
+            style = MaterialTheme.typography.labelLarge,
+            fontWeight = FontWeight.Bold,
+            color = MaterialTheme.colorScheme.primary,
+        )
+    }
 }
 
 @Composable
@@ -562,4 +708,11 @@ private fun comparisonText(report: ScreenTimeReport): String {
         change < 0 -> "${abs(change)}% less than $comparison"
         else -> "The same as $comparison"
     }
+}
+
+private fun impactChangeLabel(change: Int?): String = when {
+    change == null -> "New"
+    change < 0 -> "↓${abs(change)}%"
+    change > 0 -> "↑${abs(change)}%"
+    else -> "0%"
 }
