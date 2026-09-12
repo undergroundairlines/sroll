@@ -58,6 +58,9 @@ import androidx.compose.runtime.Composable
 import androidx.compose.runtime.DisposableEffect
 import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.getValue
+import androidx.compose.runtime.mutableStateOf
+import androidx.compose.runtime.saveable.rememberSaveable
+import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.graphics.Color
@@ -72,8 +75,11 @@ import androidx.lifecycle.compose.LocalLifecycleOwner
 import androidx.lifecycle.viewmodel.compose.viewModel
 import app.scrollguard.models.DetectionDiagnostic
 import app.scrollguard.models.TrackedPackage
+import app.scrollguard.ui.components.AppSection
+import app.scrollguard.ui.components.AppSectionSwitcher
 import app.scrollguard.ui.components.TrackedPackagesSection
 import app.scrollguard.ui.viewmodels.MainViewModel
+import app.scrollguard.ui.viewmodels.ScreenTimeViewModel
 import app.scrollguard.utils.StrictModePolicy
 import timber.log.Timber
 
@@ -88,10 +94,18 @@ import timber.log.Timber
 @Composable
 fun MainScreen(
     viewModel: MainViewModel = viewModel(),
+    screenTimeViewModel: ScreenTimeViewModel = androidx.lifecycle.viewmodel.compose.viewModel(),
+    initialScreenTime: Boolean = false,
 ) {
     val context = LocalContext.current
     val lifecycleOwner = LocalLifecycleOwner.current
     val serviceState by viewModel.serviceState.collectAsState()
+    val screenTimeState by screenTimeViewModel.state.collectAsState()
+    var selectedSection by rememberSaveable {
+        mutableStateOf(
+            if (initialScreenTime) AppSection.SCREEN_TIME else AppSection.BLOCKER,
+        )
+    }
 
     DisposableEffect(lifecycleOwner) {
         val observer = LifecycleEventObserver { _, event ->
@@ -99,6 +113,7 @@ fun MainScreen(
                 Lifecycle.Event.ON_RESUME -> {
                     Timber.d("Lifecycle ON_RESUME - checking service status")
                     viewModel.onResume(context)
+                    screenTimeViewModel.refresh()
                 }
 
                 Lifecycle.Event.ON_PAUSE -> {
@@ -122,6 +137,13 @@ fun MainScreen(
             onAgree = { viewModel.acceptDisclosure(context) },
             onCancel = { viewModel.hideDisclosure() },
         )
+    } else if (selectedSection == AppSection.SCREEN_TIME) {
+        ScreenTimeScreen(
+            state = screenTimeState,
+            onPeriodSelected = screenTimeViewModel::setPeriod,
+            onRefresh = screenTimeViewModel::refresh,
+            onOpenBlocker = { selectedSection = AppSection.BLOCKER },
+        )
     } else {
         MainScreenContent(
             isPermissionGranted = serviceState.isGranted,
@@ -131,6 +153,7 @@ fun MainScreen(
             strictModePendingTarget = serviceState.strictModePendingTarget,
             strictModeRemainingSeconds = serviceState.strictModeRemainingSeconds,
             onOpenSettings = { viewModel.showDisclosure() },
+            onOpenScreenTime = { selectedSection = AppSection.SCREEN_TIME },
             onPackageToggle = { packageName, enabled ->
                 viewModel.togglePackageTracking(packageName, enabled)
             },
@@ -163,6 +186,7 @@ fun MainScreenContent(
     strictModePendingTarget: String? = null,
     strictModeRemainingSeconds: Long = 0L,
     onOpenSettings: () -> Unit = {},
+    onOpenScreenTime: () -> Unit = {},
     onPackageToggle: (String, Boolean) -> Unit = { _, _ -> },
     onStrictModeToggle: (Boolean) -> Unit = {},
     onCancelStrictModeUnlock: () -> Unit = {},
@@ -183,6 +207,12 @@ fun MainScreenContent(
                 .verticalScroll(scrollState),
             horizontalAlignment = Alignment.CenterHorizontally,
         ) {
+            AppSectionSwitcher(
+                selected = AppSection.BLOCKER,
+                onSelected = {
+                    if (it == AppSection.SCREEN_TIME) onOpenScreenTime()
+                },
+            )
             if (isPermissionGranted) {
                 ServiceActiveContent(
                     trackedPackages = trackedPackages,
