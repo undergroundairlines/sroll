@@ -15,7 +15,10 @@ privacy configuration, visual theme, application identity, and TikTok support ha
 - Full TikTok blocking with an immediate Home action
 - Per-app switches
 - Optional Strict Mode with a persistent 30-minute delay before any blocker can be disabled
-- Apple-style day/week screen-time dashboard with app percentages and seven-day bars
+- Exact event-based screen-time dashboard with Day, Week, Month and All Time views
+- Hourly, daily and monthly usage charts that reconcile with the displayed total
+- Per-app detail pages, percentages, screen-on time and pickup counts
+- Private daily archive that preserves all-time history after Android prunes old events
 - Small and wide home-screen widgets showing today’s total and percentage change
 - Wide widget includes the top three apps with readable time and percentage values
 - In-app detector diagnostics using only scores and Android resource IDs

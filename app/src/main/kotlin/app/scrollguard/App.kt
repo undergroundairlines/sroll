@@ -17,7 +17,12 @@
 package app.scrollguard
 
 import android.app.Application
+import androidx.work.ExistingPeriodicWorkPolicy
+import androidx.work.PeriodicWorkRequestBuilder
+import androidx.work.WorkManager
+import app.scrollguard.services.ScreenTimeArchiveWorker
 import timber.log.Timber
+import java.util.concurrent.TimeUnit
 
 /**
  * Application class for initializing app-wide components.
@@ -28,5 +33,10 @@ class App : Application() {
     override fun onCreate() {
         super.onCreate()
         if (BuildConfig.DEBUG) Timber.plant(Timber.DebugTree())
+        WorkManager.getInstance(this).enqueueUniquePeriodicWork(
+            "screen-time-archive",
+            ExistingPeriodicWorkPolicy.KEEP,
+            PeriodicWorkRequestBuilder<ScreenTimeArchiveWorker>(6, TimeUnit.HOURS).build(),
+        )
     }
 }
