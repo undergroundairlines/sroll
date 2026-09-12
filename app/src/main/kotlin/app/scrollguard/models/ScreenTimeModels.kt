@@ -22,6 +22,24 @@ data class AppUsage(
     val buckets: List<UsageBucket> = emptyList(),
 )
 
+data class AppImpact(
+    val packageName: String,
+    val displayName: String,
+    val beforeDailyMillis: Long,
+    val sinceDailyMillis: Long,
+    val changePercentage: Int?,
+)
+
+data class ScreenTimeImpact(
+    val startedAtMillis: Long,
+    val baselineDays: Int,
+    val beforeDailyMillis: Long,
+    val sinceDailyMillis: Long,
+    val changePercentage: Int?,
+    val timeSavedMillis: Long,
+    val apps: List<AppImpact>,
+)
+
 data class ScreenTimeReport(
     val period: UsagePeriod,
     val totalMillis: Long,
@@ -33,4 +51,5 @@ data class ScreenTimeReport(
     val screenOnMillis: Long,
     val pickups: Int,
     val trackingSinceMillis: Long,
+    val impact: ScreenTimeImpact? = null,
 )
