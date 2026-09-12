@@ -65,6 +65,17 @@ class ScreenTimeArchive(context: Context) :
         }
     }
 
+    fun deleteDay(dayStart: Long) {
+        writableDatabase.beginTransaction()
+        try {
+            writableDatabase.delete("app_daily", "day_start = ?", arrayOf(dayStart.toString()))
+            writableDatabase.delete("day_summary", "day_start = ?", arrayOf(dayStart.toString()))
+            writableDatabase.setTransactionSuccessful()
+        } finally {
+            writableDatabase.endTransaction()
+        }
+    }
+
     fun replaceDay(dayStart: Long, snapshot: ExactUsageSnapshot) {
         writableDatabase.beginTransaction()
         try {

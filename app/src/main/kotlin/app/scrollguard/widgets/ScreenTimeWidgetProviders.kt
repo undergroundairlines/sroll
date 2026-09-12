@@ -88,7 +88,9 @@ object ScreenTimeWidgetUpdater {
             try {
                 val repository = ScreenTimeRepository(appContext)
                 val report = if (repository.hasUsageAccess()) {
-                    runCatching { repository.load(UsagePeriod.DAY) }.getOrNull()
+                    runCatching {
+                        repository.load(UsagePeriod.DAY, includeImpact = false)
+                    }.getOrNull()
                 } else {
                     null
                 }

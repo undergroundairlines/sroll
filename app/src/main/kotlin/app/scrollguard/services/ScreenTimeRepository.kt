@@ -13,7 +13,9 @@ import android.content.Intent
 import android.content.pm.PackageManager
 import android.os.Process
 import app.scrollguard.models.AppUsage
+import app.scrollguard.models.AppImpact
 import app.scrollguard.models.ScreenTimeReport
+import app.scrollguard.models.ScreenTimeImpact
 import app.scrollguard.models.UsageBucket
 import app.scrollguard.models.UsagePeriod
 import app.scrollguard.utils.ScreenTimeFormatting
@@ -26,6 +28,7 @@ class ScreenTimeRepository(private val context: Context) {
     private val reader = ExactUsageReader(context)
     private val archive = ScreenTimeArchive(context)
     private val packageManager = context.packageManager
+    private val impactBaselineStore = ImpactBaselineStore(context)
 
     fun hasUsageAccess(): Boolean {
         val appOps = context.getSystemService(Context.APP_OPS_SERVICE) as AppOpsManager
@@ -36,7 +39,11 @@ class ScreenTimeRepository(private val context: Context) {
         ) == AppOpsManager.MODE_ALLOWED
     }
 
-    fun load(period: UsagePeriod, nowMillis: Long = System.currentTimeMillis()): ScreenTimeReport {
+    fun load(
+        period: UsagePeriod,
+        nowMillis: Long = System.currentTimeMillis(),
+        includeImpact: Boolean = true,
+    ): ScreenTimeReport {
         val todayStart = startOfDay(nowMillis)
         val trackingStart = minOf(
             startOfDay(firstInstallTime()),
@@ -96,6 +103,59 @@ class ScreenTimeRepository(private val context: Context) {
             screenOnMillis = current.screenOnMillis,
             pickups = current.pickups,
             trackingSinceMillis = trackingStart,
+            impact = if (includeImpact) buildImpact(nowMillis) else null,
+        )
+    }
+
+    private fun buildImpact(nowMillis: Long): ScreenTimeImpact? {
+        val installTime = firstInstallTime().coerceAtMost(nowMillis)
+        val elapsedMillis = nowMillis - installTime
+        if (elapsedMillis < MINIMUM_IMPACT_WINDOW_MILLIS) return null
+
+        val baselineDurations = impactBaselineStore.load(installTime) ?: run {
+            val baseline = filtered(
+                reader.read(installTime - IMPACT_BASELINE_MILLIS, installTime),
+            ).durations
+            impactBaselineStore.save(installTime, baseline)
+            baseline
+        }
+
+        // Rewrite the installation day from the actual installation time, not midnight. This
+        // prevents Friday morning usage from being counted as usage "since Scroll Guard".
+        archiveCompletedDays()
+        val since = combinedSnapshot(installTime, startOfDay(nowMillis), nowMillis)
+        val beforeDaily = normalizedDaily(baselineDurations.values.sum(), IMPACT_BASELINE_MILLIS)
+        val sinceDaily = normalizedDaily(since.durations.values.sum(), elapsedMillis)
+        val expectedSince = beforeDaily.toDouble() * elapsedMillis.toDouble() / DAY_MILLIS
+        val timeSaved = (expectedSince - since.durations.values.sum().toDouble())
+            .toLong()
+            .coerceAtLeast(0L)
+
+        val packageNames = baselineDurations.keys + since.durations.keys
+        val apps = packageNames.map { packageName ->
+            val before = normalizedDaily(
+                baselineDurations[packageName] ?: 0L,
+                IMPACT_BASELINE_MILLIS,
+            )
+            val after = normalizedDaily(since.durations[packageName] ?: 0L, elapsedMillis)
+            AppImpact(
+                packageName = packageName,
+                displayName = appLabel(packageName),
+                beforeDailyMillis = before,
+                sinceDailyMillis = after,
+                changePercentage = ScreenTimeFormatting.changePercentage(after, before),
+            )
+        }.filter { it.beforeDailyMillis > 0L || it.sinceDailyMillis > 0L }
+            .sortedByDescending { maxOf(it.beforeDailyMillis, it.sinceDailyMillis) }
+
+        return ScreenTimeImpact(
+            startedAtMillis = installTime,
+            baselineDays = IMPACT_BASELINE_DAYS,
+            beforeDailyMillis = beforeDaily,
+            sinceDailyMillis = sinceDaily,
+            changePercentage = ScreenTimeFormatting.changePercentage(sinceDaily, beforeDaily),
+            timeSavedMillis = timeSaved,
+            apps = apps,
         )
     }
 
@@ -103,6 +163,8 @@ class ScreenTimeRepository(private val context: Context) {
     fun archiveCompletedDays() {
         if (!hasUsageAccess()) return
         val todayStart = startOfDay(System.currentTimeMillis())
+        val installTime = firstInstallTime()
+        val installDay = startOfDay(installTime)
         val initialStart = minOf(startOfDay(firstInstallTime()), addDays(todayStart, -60))
         var day = archive.latestDay()?.let { addDays(it, 1) } ?: initialStart
         while (day < todayStart) {
@@ -111,6 +173,17 @@ class ScreenTimeRepository(private val context: Context) {
             }
             day = addDays(day, 1)
         }
+
+        // A previous version could archive the whole installation day. Always correct that one
+        // day so impact reporting starts at the exact time Scroll Guard was installed.
+        if (installDay < todayStart) {
+            archive.replaceDay(
+                installDay,
+                filtered(reader.read(installTime, addDays(installDay, 1))),
+            )
+        } else {
+            archive.deleteDay(installDay)
+        }
     }
 
     private fun combinedSnapshot(
@@ -118,9 +191,10 @@ class ScreenTimeRepository(private val context: Context) {
         todayStart: Long,
         nowMillis: Long,
     ): ExactUsageSnapshot {
-        val archivedDurations = archive.appTotals(rangeStart, todayStart).toMutableMap()
-        val archivedSummary = archive.summary(rangeStart, todayStart)
-        val today = filtered(reader.read(todayStart, nowMillis))
+        val archiveStart = startOfDay(rangeStart)
+        val archivedDurations = archive.appTotals(archiveStart, todayStart).toMutableMap()
+        val archivedSummary = archive.summary(archiveStart, todayStart)
+        val today = filtered(reader.read(maxOf(todayStart, rangeStart), nowMillis))
         today.durations.forEach { (packageName, duration) ->
             archivedDurations[packageName] = (archivedDurations[packageName] ?: 0L) + duration
         }
@@ -290,6 +364,11 @@ class ScreenTimeRepository(private val context: Context) {
         System.currentTimeMillis()
     }
 
+    private fun normalizedDaily(durationMillis: Long, windowMillis: Long): Long {
+        if (durationMillis <= 0L || windowMillis <= 0L) return 0L
+        return (durationMillis.toDouble() * DAY_MILLIS / windowMillis.toDouble()).toLong()
+    }
+
     private fun hourLabel(hour: Int): String = when {
         hour == 0 -> "12a"
         hour < 12 -> "${hour}a"
@@ -326,5 +405,9 @@ class ScreenTimeRepository(private val context: Context) {
 
     private companion object {
         const val HOUR_MILLIS = 60L * 60L * 1000L
+        const val DAY_MILLIS = 24L * HOUR_MILLIS
+        const val IMPACT_BASELINE_DAYS = 7
+        const val IMPACT_BASELINE_MILLIS = IMPACT_BASELINE_DAYS * DAY_MILLIS
+        const val MINIMUM_IMPACT_WINDOW_MILLIS = HOUR_MILLIS
     }
 }
