@@ -51,6 +51,7 @@ import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.OutlinedButton
 import androidx.compose.material3.Scaffold
 import androidx.compose.material3.Surface
+import androidx.compose.material3.Switch
 import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
 import androidx.compose.runtime.Composable
@@ -73,6 +74,7 @@ import app.scrollguard.models.DetectionDiagnostic
 import app.scrollguard.models.TrackedPackage
 import app.scrollguard.ui.components.TrackedPackagesSection
 import app.scrollguard.ui.viewmodels.MainViewModel
+import app.scrollguard.utils.StrictModePolicy
 import timber.log.Timber
 
 /**
@@ -125,10 +127,15 @@ fun MainScreen(
             isPermissionGranted = serviceState.isGranted,
             trackedPackages = serviceState.trackedPackages,
             diagnostics = serviceState.diagnostics,
+            strictModeEnabled = serviceState.strictModeEnabled,
+            strictModePendingTarget = serviceState.strictModePendingTarget,
+            strictModeRemainingSeconds = serviceState.strictModeRemainingSeconds,
             onOpenSettings = { viewModel.showDisclosure() },
             onPackageToggle = { packageName, enabled ->
                 viewModel.togglePackageTracking(packageName, enabled)
             },
+            onStrictModeToggle = viewModel::toggleStrictMode,
+            onCancelStrictModeUnlock = viewModel::cancelStrictModeUnlock,
             onClearDiagnostics = viewModel::clearDiagnostics,
         )
     }
@@ -152,8 +159,13 @@ fun MainScreenContent(
     modifier: Modifier = Modifier,
     trackedPackages: List<TrackedPackage> = emptyList(),
     diagnostics: List<DetectionDiagnostic> = emptyList(),
+    strictModeEnabled: Boolean = false,
+    strictModePendingTarget: String? = null,
+    strictModeRemainingSeconds: Long = 0L,
     onOpenSettings: () -> Unit = {},
     onPackageToggle: (String, Boolean) -> Unit = { _, _ -> },
+    onStrictModeToggle: (Boolean) -> Unit = {},
+    onCancelStrictModeUnlock: () -> Unit = {},
     onClearDiagnostics: () -> Unit = {},
 ) {
     val context = LocalContext.current
@@ -175,7 +187,12 @@ fun MainScreenContent(
                 ServiceActiveContent(
                     trackedPackages = trackedPackages,
                     diagnostics = diagnostics,
+                    strictModeEnabled = strictModeEnabled,
+                    strictModePendingTarget = strictModePendingTarget,
+                    strictModeRemainingSeconds = strictModeRemainingSeconds,
                     onPackageToggle = onPackageToggle,
+                    onStrictModeToggle = onStrictModeToggle,
+                    onCancelStrictModeUnlock = onCancelStrictModeUnlock,
                     onManagePermission = onOpenSettings,
                     onClearDiagnostics = onClearDiagnostics,
                 )
@@ -211,7 +228,12 @@ fun MainScreenContent(
 private fun ServiceActiveContent(
     trackedPackages: List<TrackedPackage> = emptyList(),
     diagnostics: List<DetectionDiagnostic> = emptyList(),
+    strictModeEnabled: Boolean = false,
+    strictModePendingTarget: String? = null,
+    strictModeRemainingSeconds: Long = 0L,
     onPackageToggle: (String, Boolean) -> Unit = { _, _ -> },
+    onStrictModeToggle: (Boolean) -> Unit = {},
+    onCancelStrictModeUnlock: () -> Unit = {},
     onManagePermission: () -> Unit = {},
     onClearDiagnostics: () -> Unit = {},
 ) {
@@ -301,6 +323,17 @@ private fun ServiceActiveContent(
 
             Spacer(modifier = Modifier.height(16.dp))
 
+            StrictModeSection(
+                enabled = strictModeEnabled,
+                pendingTarget = strictModePendingTarget,
+                remainingSeconds = strictModeRemainingSeconds,
+                packages = trackedPackages,
+                onToggle = onStrictModeToggle,
+                onCancelUnlock = onCancelStrictModeUnlock,
+            )
+
+            Spacer(modifier = Modifier.height(16.dp))
+
             TrackedPackagesSection(
                 packages = trackedPackages,
                 onPackageToggle = onPackageToggle,
@@ -330,6 +363,76 @@ private fun ServiceActiveContent(
                     style = MaterialTheme.typography.titleSmall,
                     fontWeight = FontWeight.SemiBold,
                 )
+            }
+        }
+    }
+}
+
+@Composable
+private fun StrictModeSection(
+    enabled: Boolean,
+    pendingTarget: String?,
+    remainingSeconds: Long,
+    packages: List<TrackedPackage>,
+    onToggle: (Boolean) -> Unit,
+    onCancelUnlock: () -> Unit,
+) {
+    Card(
+        modifier = Modifier.fillMaxWidth(),
+        colors = CardDefaults.cardColors(
+            containerColor = MaterialTheme.colorScheme.surfaceVariant,
+        ),
+        elevation = CardDefaults.cardElevation(defaultElevation = 0.dp),
+    ) {
+        Column(modifier = Modifier.padding(16.dp)) {
+            Row(
+                modifier = Modifier.fillMaxWidth(),
+                horizontalArrangement = Arrangement.SpaceBetween,
+                verticalAlignment = Alignment.CenterVertically,
+            ) {
+                Column(modifier = Modifier.weight(1f)) {
+                    Text(
+                        text = "Strict Mode",
+                        style = MaterialTheme.typography.titleMedium,
+                        fontWeight = FontWeight.Bold,
+                    )
+                    Text(
+                        text = "Wait 30 minutes before any blocker can be turned off",
+                        style = MaterialTheme.typography.bodySmall,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant,
+                    )
+                }
+                Spacer(modifier = Modifier.size(12.dp))
+                Switch(
+                    checked = enabled,
+                    onCheckedChange = onToggle,
+                )
+            }
+
+            if (pendingTarget != null) {
+                Spacer(modifier = Modifier.height(12.dp))
+                val targetName = if (pendingTarget == StrictModePolicy.STRICT_MODE_TARGET) {
+                    "Strict Mode"
+                } else {
+                    packages.firstOrNull { it.packageName == pendingTarget }?.displayName
+                        ?: "Blocker"
+                }
+                val minutes = remainingSeconds / 60L
+                val seconds = (remainingSeconds % 60L).toString().padStart(2, '0')
+                Text(
+                    text = "$targetName unlock requested",
+                    style = MaterialTheme.typography.titleSmall,
+                    fontWeight = FontWeight.SemiBold,
+                    color = MaterialTheme.colorScheme.primary,
+                )
+                Text(
+                    text = "Still blocked for $minutes:$seconds",
+                    style = MaterialTheme.typography.bodyMedium,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant,
+                )
+                TextButton(onClick = onCancelUnlock) {
+                    Text("Cancel unlock request")
+                }
             }
         }
     }

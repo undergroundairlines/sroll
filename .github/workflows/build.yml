@@ -25,6 +25,12 @@ jobs:
           java-version: 17
           cache: gradle
 
+      - name: Keep one signing key for future updates
+        uses: actions/cache@v4
+        with:
+          path: ~/.android/debug.keystore
+          key: scroll-guard-debug-signing-v1
+
       - name: Set up Gradle
         uses: gradle/actions/setup-gradle@v4
         with:

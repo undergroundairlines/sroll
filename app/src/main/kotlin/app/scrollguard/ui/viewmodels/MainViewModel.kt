@@ -24,11 +24,13 @@ import app.scrollguard.models.DetectionDiagnostic
 import app.scrollguard.models.TrackedPackage
 import app.scrollguard.services.DetectionDiagnostics
 import app.scrollguard.utils.AccessibilityServiceManager
+import app.scrollguard.utils.StrictModePolicy
 import app.scrollguard.utils.UserPreferencesProvider
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
+import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.flow.update
 import kotlinx.coroutines.isActive
 import kotlinx.coroutines.launch
@@ -47,6 +49,9 @@ data class ServiceState(
     val isChecking: Boolean = false,
     val trackedPackages: List<TrackedPackage> = emptyList(),
     val diagnostics: List<DetectionDiagnostic> = emptyList(),
+    val strictModeEnabled: Boolean = false,
+    val strictModePendingTarget: String? = null,
+    val strictModeRemainingSeconds: Long = 0L,
     val showDisclosure: Boolean = false,
 )
 
@@ -78,6 +83,8 @@ class MainViewModel(
         Timber.d("MainViewModel initialized")
         observeTrackedPackages()
         observeDiagnostics()
+        observeStrictMode()
+        startStrictModeTicker()
     }
 
     private fun observeDiagnostics() {
@@ -106,6 +113,45 @@ class MainViewModel(
                     }",
                 )
                 _serviceState.update { it.copy(trackedPackages = packages) }
+            }
+        }
+    }
+
+    private fun observeStrictMode() {
+        viewModelScope.launch {
+            userPreferencesProvider.getStrictModeSettings().collect { settings ->
+                _serviceState.update {
+                    it.copy(
+                        strictModeEnabled = settings.enabled,
+                        strictModePendingTarget = settings.pendingTarget,
+                        strictModeRemainingSeconds = StrictModePolicy.remainingSeconds(
+                            settings.unlockAtMillis,
+                            System.currentTimeMillis(),
+                        ),
+                    )
+                }
+            }
+        }
+    }
+
+    private fun startStrictModeTicker() {
+        viewModelScope.launch {
+            while (isActive) {
+                val settings = userPreferencesProvider.getStrictModeSettings().first()
+                if (settings.pendingTarget != null) {
+                    userPreferencesProvider.completeStrictModeUnlockIfExpired(
+                        System.currentTimeMillis(),
+                    )
+                    _serviceState.update {
+                        it.copy(
+                            strictModeRemainingSeconds = StrictModePolicy.remainingSeconds(
+                                settings.unlockAtMillis,
+                                System.currentTimeMillis(),
+                            ),
+                        )
+                    }
+                }
+                delay(1000L)
             }
         }
     }
@@ -225,7 +271,33 @@ class MainViewModel(
     fun togglePackageTracking(packageName: String, enabled: Boolean) {
         Timber.i("Toggling package tracking: $packageName -> $enabled")
         viewModelScope.launch {
-            userPreferencesProvider.togglePackage(packageName, enabled)
+            if (!enabled && _serviceState.value.strictModeEnabled) {
+                userPreferencesProvider.requestStrictModeUnlock(
+                    target = packageName,
+                    nowMillis = System.currentTimeMillis(),
+                )
+            } else {
+                userPreferencesProvider.togglePackage(packageName, enabled)
+            }
+        }
+    }
+
+    fun toggleStrictMode(enabled: Boolean) {
+        viewModelScope.launch {
+            if (enabled) {
+                userPreferencesProvider.enableStrictMode()
+            } else {
+                userPreferencesProvider.requestStrictModeUnlock(
+                    target = StrictModePolicy.STRICT_MODE_TARGET,
+                    nowMillis = System.currentTimeMillis(),
+                )
+            }
+        }
+    }
+
+    fun cancelStrictModeUnlock() {
+        viewModelScope.launch {
+            userPreferencesProvider.cancelStrictModeUnlock()
         }
     }
 

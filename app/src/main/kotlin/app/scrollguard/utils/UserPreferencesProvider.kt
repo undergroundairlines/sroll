@@ -21,6 +21,7 @@ import androidx.datastore.core.DataStore
 import androidx.datastore.preferences.core.Preferences
 import androidx.datastore.preferences.core.booleanPreferencesKey
 import androidx.datastore.preferences.core.edit
+import androidx.datastore.preferences.core.longPreferencesKey
 import androidx.datastore.preferences.core.stringPreferencesKey
 import androidx.datastore.preferences.preferencesDataStore
 import app.scrollguard.models.TrackedPackage
@@ -39,11 +40,23 @@ import timber.log.Timber
  */
 class UserPreferencesProvider(private val context: Context) {
 
+    data class StrictModeSettings(
+        val enabled: Boolean = false,
+        val pendingTarget: String? = null,
+        val unlockAtMillis: Long = 0L,
+    )
+
     private val userPreferencesKey = stringPreferencesKey("app.scrollguard.preferences")
     private val onboardingCompletedKey =
         booleanPreferencesKey("app.scrollguard.onboarding_completed")
     private val disclosureAcceptedKey =
         booleanPreferencesKey("app.scrollguard.disclosure_accepted")
+    private val strictModeEnabledKey =
+        booleanPreferencesKey("app.scrollguard.strict_mode_enabled")
+    private val strictModePendingTargetKey =
+        stringPreferencesKey("app.scrollguard.strict_mode_pending_target")
+    private val strictModeUnlockAtKey =
+        longPreferencesKey("app.scrollguard.strict_mode_unlock_at")
 
     /**
      * Gets the list of currently tracked (enabled) package names.
@@ -102,6 +115,68 @@ class UserPreferencesProvider(private val context: Context) {
         }
 
         setTrackedPackages(currentPackages)
+    }
+
+    fun getStrictModeSettings(): Flow<StrictModeSettings> {
+        return context.dataStore.data.map { preferences ->
+            StrictModeSettings(
+                enabled = preferences[strictModeEnabledKey] ?: false,
+                pendingTarget = preferences[strictModePendingTargetKey],
+                unlockAtMillis = preferences[strictModeUnlockAtKey] ?: 0L,
+            )
+        }
+    }
+
+    /** Enables Strict Mode immediately. Disabling it must go through a delayed request. */
+    suspend fun enableStrictMode() {
+        context.dataStore.edit { preferences ->
+            preferences[strictModeEnabledKey] = true
+            preferences.remove(strictModePendingTargetKey)
+            preferences.remove(strictModeUnlockAtKey)
+        }
+    }
+
+    /** Starts one persistent 30-minute request to disable a blocker or Strict Mode itself. */
+    suspend fun requestStrictModeUnlock(target: String, nowMillis: Long) {
+        context.dataStore.edit { preferences ->
+            if (preferences[strictModePendingTargetKey] == null) {
+                preferences[strictModePendingTargetKey] = target
+                preferences[strictModeUnlockAtKey] = StrictModePolicy.unlockAt(nowMillis)
+            }
+        }
+    }
+
+    suspend fun cancelStrictModeUnlock() {
+        context.dataStore.edit { preferences ->
+            preferences.remove(strictModePendingTargetKey)
+            preferences.remove(strictModeUnlockAtKey)
+        }
+    }
+
+    /** Applies an expired request atomically. Returns true when a request was completed. */
+    suspend fun completeStrictModeUnlockIfExpired(nowMillis: Long): Boolean {
+        var completed = false
+        context.dataStore.edit { preferences ->
+            val target = preferences[strictModePendingTargetKey]
+            val unlockAt = preferences[strictModeUnlockAtKey] ?: 0L
+            if (target != null && StrictModePolicy.isExpired(unlockAt, nowMillis)) {
+                if (target == StrictModePolicy.STRICT_MODE_TARGET) {
+                    preferences[strictModeEnabledKey] = false
+                } else {
+                    val packages = preferences[userPreferencesKey]
+                        ?.split(",")
+                        ?.filter { it.isNotBlank() }
+                        ?.toMutableList()
+                        ?: PackageConstants.DEFAULT_ENABLED_PACKAGES.toMutableList()
+                    packages.remove(target)
+                    preferences[userPreferencesKey] = packages.joinToString(",")
+                }
+                preferences.remove(strictModePendingTargetKey)
+                preferences.remove(strictModeUnlockAtKey)
+                completed = true
+            }
+        }
+        return completed
     }
 
     /**
