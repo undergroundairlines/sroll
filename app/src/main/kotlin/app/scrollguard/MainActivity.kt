@@ -44,6 +44,10 @@ import timber.log.Timber
  */
 class MainActivity : ComponentActivity() {
 
+    companion object {
+        const val EXTRA_OPEN_SCREEN_TIME = "app.scrollguard.OPEN_SCREEN_TIME"
+    }
+
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
         Timber.d("MainActivity onCreate")
@@ -83,7 +87,13 @@ class MainActivity : ComponentActivity() {
                         }
 
                         else -> {
-                            MainScreen(viewModel = mainViewModel)
+                            MainScreen(
+                                viewModel = mainViewModel,
+                                initialScreenTime = intent.getBooleanExtra(
+                                    EXTRA_OPEN_SCREEN_TIME,
+                                    false,
+                                ),
+                            )
                         }
                     }
                 }

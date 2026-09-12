@@ -41,4 +41,8 @@
     <string name="setup_step_3">Toggle the switch to enable</string>
     <string name="setup_step_4">Return to this app</string>
     <string name="open_settings_button">Open Settings</string>
+    <string name="widget_small_name">Screen Time — Small</string>
+    <string name="widget_wide_name">Screen Time — Wide</string>
+    <string name="widget_small_description">Today’s total screen time and percentage change</string>
+    <string name="widget_wide_description">Today’s screen time with top apps and percentages</string>
 </resources>
