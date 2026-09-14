@@ -45,6 +45,7 @@ internal data class InstagramSignals(
     val homeTabSelected: Boolean = false,
     val normalScreenId: Boolean = false,
     val normalScreenLabel: Boolean = false,
+    val profileScreen: Boolean = false,
 )
 
 internal fun scoreInstagram(signals: InstagramSignals): ScoredSignals = buildScore {
@@ -56,6 +57,7 @@ internal fun scoreInstagram(signals: InstagramSignals): ScoredSignals = buildSco
     addIf(signals.verticalPager, 1, "Vertical media pager")
     subtractIf(signals.storyViewer, 10)
     subtractIf(signals.homeTabSelected, 10)
+    subtractIf(signals.profileScreen, 20)
     subtractIf(signals.normalScreenId && score < 7, 5)
     subtractIf(signals.normalScreenLabel && score < 7, 5)
 }
