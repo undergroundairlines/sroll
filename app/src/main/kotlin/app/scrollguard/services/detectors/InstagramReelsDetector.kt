@@ -37,10 +37,16 @@ class InstagramReelsDetector : ShortFormContentDetector {
         rootNode: AccessibilityNodeInfo?,
         resources: Resources,
     ): DetectionResult {
-        if (rootNode == null) {
+        val eventSource = runCatching { event.source }.getOrNull()
+        val instagramRoots = listOfNotNull(rootNode, eventSource).filter { node ->
+            node.packageName?.toString() == getPackageName()
+        }.distinct()
+        if (instagramRoots.isEmpty()) {
             return DetectionResult(getPackageName(), 0, 7, listOf("Waiting for Instagram interface"))
         }
-        val tree = AccessibilityTreeSnapshot.from(rootNode)
+        // The event source often contains controls for a Home-feed Reel that Instagram omits
+        // from the full window tree. Merge both, while rejecting Android's overview window.
+        val tree = AccessibilityTreeSnapshot.from(*instagramRoots.toTypedArray())
         val controlCount = tree.labelGroupCount(
             setOf("comment", "comments"),
             setOf("send", "share"),
@@ -70,6 +76,12 @@ class InstagramReelsDetector : ShortFormContentDetector {
                     "home_tab",
                 ),
                 normalScreenLabel = tree.hasLabel("new message", "edit profile"),
+                profileScreen = tree.hasVisibleId(
+                    "profile_header",
+                    "row_profile_header",
+                    "profile_user_info",
+                    "profile_header_follow",
+                ),
             ),
         )
 
