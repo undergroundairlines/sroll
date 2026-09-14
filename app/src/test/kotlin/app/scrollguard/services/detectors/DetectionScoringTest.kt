@@ -67,6 +67,20 @@ class DetectionScoringTest {
     }
 
     @Test
+    fun profileHeaderOverridesSelectedProfileReelsGrid() {
+        val result = scoreInstagram(
+            InstagramSignals(
+                selectedTabLabel = true,
+                reelIds = true,
+                verticalPager = true,
+                profileScreen = true,
+            ),
+        )
+
+        assertTrue(result.score < 7)
+    }
+
+    @Test
     fun selectedHomeTabOverridesPreloadedReelsSignals() {
         val result = scoreInstagram(
             InstagramSignals(

@@ -76,10 +76,10 @@ internal class AccessibilityTreeSnapshot private constructor(
     companion object {
         private const val MAX_NODES = 350
 
-        fun from(root: AccessibilityNodeInfo): AccessibilityTreeSnapshot {
+        fun from(vararg roots: AccessibilityNodeInfo): AccessibilityTreeSnapshot {
             val queue = ArrayDeque<AccessibilityNodeInfo>()
             val signals = mutableListOf<NodeSignal>()
-            queue.add(root)
+            roots.forEach(queue::addLast)
 
             while (queue.isNotEmpty() && signals.size < MAX_NODES) {
                 val node = queue.removeFirst()

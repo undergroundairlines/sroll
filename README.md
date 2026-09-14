@@ -12,6 +12,7 @@ privacy configuration, visual theme, application identity, and TikTok support ha
 
 - Multi-signal YouTube Shorts detection
 - Multi-signal Instagram Reels detection
+- Profile-page exclusion and event-source diagnostics for Instagram Home-feed Reels
 - Full TikTok blocking with an immediate Home action
 - Per-app switches
 - Optional Strict Mode with a persistent 30-minute delay before any blocker can be disabled
