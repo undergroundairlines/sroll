@@ -18,11 +18,12 @@ package app.scrollguard.services
 
 import android.accessibilityservice.AccessibilityService
 import android.accessibilityservice.AccessibilityServiceInfo
+import android.accessibilityservice.GestureDescription
 import android.annotation.SuppressLint
 import android.graphics.Path
 import android.os.SystemClock
 import android.util.DisplayMetrics
-import android.view.GestureDescription
+import android.view.WindowManager
 import android.view.accessibility.AccessibilityEvent
 import app.scrollguard.models.BlockAction
 import app.scrollguard.services.detectors.InstagramReelsDetector
@@ -173,7 +174,7 @@ class ShortFormContentBlockerService : AccessibilityService() {
     private fun skipFeedReel() {
         val metrics = DisplayMetrics()
         @Suppress("DEPRECATION")
-        windowManager.defaultDisplay.getRealMetrics(metrics)
+        (getSystemService(WINDOW_SERVICE) as WindowManager).defaultDisplay.getRealMetrics(metrics)
         val x = metrics.widthPixels / 2f
         val path = Path().apply {
             moveTo(x, metrics.heightPixels * 0.78f)
