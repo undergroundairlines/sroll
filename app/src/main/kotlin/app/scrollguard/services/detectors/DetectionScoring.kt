@@ -57,7 +57,7 @@ internal fun scoreInstagram(signals: InstagramSignals): ScoredSignals = buildSco
     addIf(signals.reelsControls, 3, "Reels control group")
     addIf(signals.verticalPager, 1, "Vertical media pager")
     subtractIf(signals.storyViewer, 10)
-    subtractIf(signals.homeTabSelected, 10)
+    subtractIf(signals.homeTabSelected && !signals.homeFeedReel, 10)
     subtractIf(signals.profileScreen, 20)
     subtractIf(signals.normalScreenId && score < 7, 5)
     subtractIf(signals.normalScreenLabel && score < 7, 5)
