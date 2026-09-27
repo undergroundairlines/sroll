@@ -19,6 +19,7 @@
     android:accessibilityEventTypes="typeWindowStateChanged|typeWindowContentChanged|typeViewScrolled"
     android:accessibilityFeedbackType="feedbackGeneric"
     android:canRetrieveWindowContent="true"
+    android:canPerformGestures="true"
     android:isAccessibilityTool="false"
     android:notificationTimeout="100"
     android:description="@string/setup_description" />
