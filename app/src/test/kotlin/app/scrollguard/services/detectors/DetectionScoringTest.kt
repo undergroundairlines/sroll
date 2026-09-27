@@ -107,6 +107,22 @@ class DetectionScoringTest {
     }
 
     @Test
+    fun embeddedReelOverridesSelectedReelsTabWhenHomeFeedRowIsPresent() {
+        val result = scoreInstagram(
+            InstagramSignals(
+                selectedTabId = true,
+                viewerId = true,
+                reelIds = true,
+                reelsControls = true,
+                verticalPager = true,
+                homeFeedReel = true,
+            ),
+        )
+
+        assertTrue(result.score >= 7)
+    }
+
+    @Test
     fun selectedHomeTabOverridesPreloadedReelsSignals() {
         val result = scoreInstagram(
             InstagramSignals(
