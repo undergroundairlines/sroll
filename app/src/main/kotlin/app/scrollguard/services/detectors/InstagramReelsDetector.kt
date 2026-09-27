@@ -53,21 +53,32 @@ class InstagramReelsDetector : ShortFormContentDetector {
             setOf("audio", "use audio", "original audio"),
             setOf("remix"),
         )
+        val selectedHome = tree.hasSelectedId("feed_tab", "home_tab") ||
+            tree.hasSelectedLabel("home")
+        val profileScreen = tree.hasVisibleId(
+            "profile_header",
+            "row_profile_header",
+            "profile_user_info",
+            "profile_header_follow",
+        )
+        val reelIds = tree.hasVisibleId("clips_", "reels_")
+        val verticalPager = tree.hasTallScrollableNode()
+        val homeFeedReel = selectedHome && !profileScreen &&
+            ((reelIds && controlCount >= 2) || (verticalPager && controlCount >= 3))
         val scored = scoreInstagram(
             InstagramSignals(
                 selectedTabId = tree.hasSelectedId("clips_tab", "reels_tab"),
                 selectedTabLabel = tree.hasSelectedLabel("reels"),
                 viewerId = tree.hasVisibleId("clips_viewer", "reels_viewer"),
-                reelIds = tree.hasVisibleId("clips_", "reels_"),
+                reelIds = reelIds,
                 reelsControls = controlCount >= 3,
-                verticalPager = tree.hasTallScrollableNode(),
+                verticalPager = verticalPager,
                 storyViewer = tree.hasVisibleId(
                     "story_viewer",
                     "stories_viewer",
                     "reel_viewer",
                 ),
-                homeTabSelected = tree.hasSelectedId("feed_tab", "home_tab") ||
-                    tree.hasSelectedLabel("home"),
+                homeTabSelected = selectedHome,
                 normalScreenId = tree.hasVisibleId(
                     "direct_inbox",
                     "inbox",
@@ -76,12 +87,8 @@ class InstagramReelsDetector : ShortFormContentDetector {
                     "home_tab",
                 ),
                 normalScreenLabel = tree.hasLabel("new message", "edit profile"),
-                profileScreen = tree.hasVisibleId(
-                    "profile_header",
-                    "row_profile_header",
-                    "profile_user_info",
-                    "profile_header_follow",
-                ),
+                profileScreen = profileScreen,
+                homeFeedReel = homeFeedReel,
             ),
         )
 
@@ -92,6 +99,11 @@ class InstagramReelsDetector : ShortFormContentDetector {
             threshold = 7,
             reasons = scored.reasons,
             identifiers = tree.diagnosticIdentifiers(),
+            action = if (homeFeedReel) {
+                app.scrollguard.models.BlockAction.SKIP_REEL
+            } else {
+                app.scrollguard.models.BlockAction.BACK
+            },
         )
     }
 }
