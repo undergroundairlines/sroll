@@ -55,6 +55,7 @@ class InstagramReelsDetector : ShortFormContentDetector {
         )
         val selectedHome = tree.hasSelectedId("feed_tab", "home_tab") ||
             tree.hasSelectedLabel("home")
+        val storyViewer = tree.hasVisibleId("story_viewer", "stories_viewer", "reel_viewer")
         val profileScreen = tree.hasVisibleId(
             "profile_header",
             "row_profile_header",
@@ -63,7 +64,7 @@ class InstagramReelsDetector : ShortFormContentDetector {
         )
         val reelIds = tree.hasVisibleId("clips_", "reels_")
         val verticalPager = tree.hasTallScrollableNode()
-        val homeFeedReel = selectedHome && !profileScreen &&
+        val homeFeedReel = selectedHome && !profileScreen && !storyViewer &&
             ((reelIds && controlCount >= 2) || (verticalPager && controlCount >= 3))
         val scored = scoreInstagram(
             InstagramSignals(
@@ -73,11 +74,7 @@ class InstagramReelsDetector : ShortFormContentDetector {
                 reelIds = reelIds,
                 reelsControls = controlCount >= 3,
                 verticalPager = verticalPager,
-                storyViewer = tree.hasVisibleId(
-                    "story_viewer",
-                    "stories_viewer",
-                    "reel_viewer",
-                ),
+                storyViewer = storyViewer,
                 homeTabSelected = selectedHome,
                 normalScreenId = tree.hasVisibleId(
                     "direct_inbox",
