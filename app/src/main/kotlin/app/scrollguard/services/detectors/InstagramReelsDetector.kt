@@ -57,14 +57,18 @@ class InstagramReelsDetector : ShortFormContentDetector {
             tree.hasSelectedLabel("home")
         val storyViewer = tree.hasVisibleId("story_viewer", "stories_viewer", "reel_viewer")
         val profileScreen = tree.hasVisibleId(
-            "profile_header",
             "row_profile_header",
+            "profile_tab_layout",
+            "profile_tab_icon_view",
             "profile_user_info",
             "profile_header_follow",
         )
+        // Instagram exposes this author row only when media is rendered as a card in Home.
+        // Do not treat its `profile_header` suffix as the user's actual profile screen.
+        val homeFeedContext = tree.hasVisibleId("row_feed_profile_header")
         val reelIds = tree.hasVisibleId("clips_", "reels_")
         val verticalPager = tree.hasTallScrollableNode()
-        val homeFeedReel = selectedHome && !profileScreen && !storyViewer &&
+        val homeFeedReel = (selectedHome || homeFeedContext) && !profileScreen && !storyViewer &&
             ((reelIds && controlCount >= 2) || (verticalPager && controlCount >= 3))
         val scored = scoreInstagram(
             InstagramSignals(
