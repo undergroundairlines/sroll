@@ -81,6 +81,32 @@ class DetectionScoringTest {
     }
 
     @Test
+    fun homeFeedReelSignalTriggersSkipAction() {
+        val result = scoreInstagram(
+            InstagramSignals(
+                homeTabSelected = true,
+                verticalPager = true,
+                reelsControls = true,
+                homeFeedReel = true,
+            ),
+        )
+
+        assertTrue(result.score >= 7)
+    }
+
+    @Test
+    fun ordinaryHomePostDoesNotTriggerHomeReelSignal() {
+        val result = scoreInstagram(
+            InstagramSignals(
+                homeTabSelected = true,
+                verticalPager = true,
+            ),
+        )
+
+        assertTrue(result.score < 7)
+    }
+
+    @Test
     fun selectedHomeTabOverridesPreloadedReelsSignals() {
         val result = scoreInstagram(
             InstagramSignals(

@@ -18,8 +18,12 @@ package app.scrollguard.services
 
 import android.accessibilityservice.AccessibilityService
 import android.accessibilityservice.AccessibilityServiceInfo
+import android.accessibilityservice.GestureDescription
 import android.annotation.SuppressLint
+import android.graphics.Path
 import android.os.SystemClock
+import android.util.DisplayMetrics
+import android.view.WindowManager
 import android.view.accessibility.AccessibilityEvent
 import app.scrollguard.models.BlockAction
 import app.scrollguard.services.detectors.InstagramReelsDetector
@@ -147,9 +151,15 @@ class ShortFormContentBlockerService : AccessibilityService() {
      * @param packageName The package name of the app where content was detected
      */
     private fun handleShortFormContentDetected(packageName: String, action: BlockAction) {
+        if (action == BlockAction.SKIP_REEL) {
+            Timber.i("[$packageName] Scrolling past in-feed Reel")
+            skipFeedReel()
+            return
+        }
         val globalAction = when (action) {
             BlockAction.BACK -> GLOBAL_ACTION_BACK
             BlockAction.HOME -> GLOBAL_ACTION_HOME
+            BlockAction.SKIP_REEL -> return
         }
         Timber.i("[$packageName] Handling detection - performing $action action")
         val success = performGlobalAction(globalAction)
@@ -158,6 +168,22 @@ class ShortFormContentBlockerService : AccessibilityService() {
         } else {
             Timber.w("[$packageName] $action action failed")
         }
+    }
+
+    /** Swipe upward once so Instagram advances beyond the current Home-feed Reel card. */
+    private fun skipFeedReel() {
+        val metrics = DisplayMetrics()
+        @Suppress("DEPRECATION")
+        (getSystemService(WINDOW_SERVICE) as WindowManager).defaultDisplay.getRealMetrics(metrics)
+        val x = metrics.widthPixels / 2f
+        val path = Path().apply {
+            moveTo(x, metrics.heightPixels * 0.78f)
+            lineTo(x, metrics.heightPixels * 0.30f)
+        }
+        val gesture = GestureDescription.Builder()
+            .addStroke(GestureDescription.StrokeDescription(path, 0L, 220L))
+            .build()
+        dispatchGesture(gesture, null, null)
     }
 
     /**

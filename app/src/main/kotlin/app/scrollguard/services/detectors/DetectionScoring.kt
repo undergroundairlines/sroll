@@ -46,6 +46,7 @@ internal data class InstagramSignals(
     val normalScreenId: Boolean = false,
     val normalScreenLabel: Boolean = false,
     val profileScreen: Boolean = false,
+    val homeFeedReel: Boolean = false,
 )
 
 internal fun scoreInstagram(signals: InstagramSignals): ScoredSignals = buildScore {
@@ -56,10 +57,14 @@ internal fun scoreInstagram(signals: InstagramSignals): ScoredSignals = buildSco
     addIf(signals.reelsControls, 3, "Reels control group")
     addIf(signals.verticalPager, 1, "Vertical media pager")
     subtractIf(signals.storyViewer, 10)
-    subtractIf(signals.homeTabSelected, 10)
+    subtractIf(signals.homeTabSelected && !signals.homeFeedReel, 10)
     subtractIf(signals.profileScreen, 20)
     subtractIf(signals.normalScreenId && score < 7, 5)
     subtractIf(signals.normalScreenLabel && score < 7, 5)
+    // Reels inside Home don't use the dedicated Reels viewer ID/tab. Only act when Home is
+    // selected and the card has either Reel-specific IDs plus media controls, or a tall
+    // swipeable media item with the full Reel interaction group.
+    addIf(signals.homeFeedReel, 8, "Reel card in Home feed")
 }
 
 private class ScoreBuilder {

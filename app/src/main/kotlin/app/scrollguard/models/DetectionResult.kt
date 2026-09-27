@@ -11,6 +11,7 @@ package app.scrollguard.models
 enum class BlockAction {
     BACK,
     HOME,
+    SKIP_REEL,
 }
 
 data class DetectionResult(
