@@ -46,9 +46,8 @@ import androidx.compose.material3.Button
 import androidx.compose.material3.ButtonDefaults
 import androidx.compose.material3.Card
 import androidx.compose.material3.CardDefaults
-import androidx.compose.material3.ExperimentalMaterial3ExpressiveApi
+import androidx.compose.material3.HorizontalDivider
 import androidx.compose.material3.Icon
-import androidx.compose.material3.LoadingIndicator
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.OutlinedButton
 import androidx.compose.material3.Scaffold
@@ -65,7 +64,6 @@ import androidx.compose.runtime.saveable.rememberSaveable
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
-import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextAlign
@@ -79,6 +77,7 @@ import app.scrollguard.models.DetectionDiagnostic
 import app.scrollguard.models.BlockAction
 import app.scrollguard.models.DetectionActionStatus
 import app.scrollguard.models.TrackedPackage
+import app.scrollguard.services.BlockStats
 import app.scrollguard.ui.components.AppSection
 import app.scrollguard.ui.components.AppSectionSwitcher
 import app.scrollguard.ui.components.TrackedPackagesSection
@@ -146,6 +145,7 @@ fun MainScreen(
             state = screenTimeState,
             onPeriodSelected = screenTimeViewModel::setPeriod,
             onRefresh = screenTimeViewModel::refresh,
+            onGoalChange = screenTimeViewModel::setDailyGoalMinutes,
             onOpenBlocker = { selectedSection = AppSection.BLOCKER },
         )
     } else {
@@ -153,6 +153,7 @@ fun MainScreen(
             isPermissionGranted = serviceState.isGranted,
             trackedPackages = serviceState.trackedPackages,
             diagnostics = serviceState.diagnostics,
+            blockStats = serviceState.blockStats,
             strictModeEnabled = serviceState.strictModeEnabled,
             strictModePendingTarget = serviceState.strictModePendingTarget,
             strictModeRemainingSeconds = serviceState.strictModeRemainingSeconds,
@@ -186,6 +187,7 @@ fun MainScreenContent(
     modifier: Modifier = Modifier,
     trackedPackages: List<TrackedPackage> = emptyList(),
     diagnostics: List<DetectionDiagnostic> = emptyList(),
+    blockStats: BlockStats = BlockStats(),
     strictModeEnabled: Boolean = false,
     strictModePendingTarget: String? = null,
     strictModeRemainingSeconds: Long = 0L,
@@ -223,6 +225,7 @@ fun MainScreenContent(
                 ServiceActiveContent(
                     trackedPackages = trackedPackages,
                     diagnostics = diagnostics,
+                    blockStats = blockStats,
                     strictModeEnabled = strictModeEnabled,
                     strictModePendingTarget = strictModePendingTarget,
                     strictModeRemainingSeconds = strictModeRemainingSeconds,
@@ -252,18 +255,17 @@ fun MainScreenContent(
 /**
  * Displays the active service status with tracked packages.
  *
- * Shows an animated loading indicator with check icon and a list
- * of tracked apps that users can toggle on/off.
+ * Shows protection counts, Strict Mode, and the tracked app controls.
  *
  * @param trackedPackages List of packages with their enabled status
  * @param onPackageToggle Callback when user toggles package blocking
  * @param onManagePermission Callback when user wants to manage accessibility permission
  */
-@OptIn(ExperimentalMaterial3ExpressiveApi::class)
 @Composable
 private fun ServiceActiveContent(
     trackedPackages: List<TrackedPackage> = emptyList(),
     diagnostics: List<DetectionDiagnostic> = emptyList(),
+    blockStats: BlockStats = BlockStats(),
     strictModeEnabled: Boolean = false,
     strictModePendingTarget: String? = null,
     strictModeRemainingSeconds: Long = 0L,
@@ -282,58 +284,7 @@ private fun ServiceActiveContent(
             horizontalAlignment = Alignment.CenterHorizontally,
             verticalArrangement = Arrangement.Center,
         ) {
-            // Material 3 Expressive LoadingIndicator with check icon
-            Box(
-                modifier = Modifier.size(200.dp),
-                contentAlignment = Alignment.Center,
-            ) {
-                // Material 3 LoadingIndicator (morphing shapes animation)
-                LoadingIndicator(
-                    modifier = Modifier.size(200.dp),
-                    color = MaterialTheme.colorScheme.primaryContainer,
-                )
-
-                // Icon container in the center
-                Surface(
-                    modifier = Modifier.size(56.dp),
-                    shape = CircleShape,
-                    color = MaterialTheme.colorScheme.primaryContainer,
-                    tonalElevation = 4.dp,
-                ) {
-                    Box(
-                        modifier = Modifier.fillMaxSize(),
-                        contentAlignment = Alignment.Center,
-                    ) {
-                        Icon(
-                            imageVector = Icons.Rounded.CheckCircle,
-                            contentDescription = "Active",
-                            modifier = Modifier.size(56.dp),
-                            tint = MaterialTheme.colorScheme.primary,
-                        )
-                    }
-                }
-            }
-
-            Spacer(modifier = Modifier.height(32.dp))
-
-            Text(
-                text = "Service Active",
-                style = MaterialTheme.typography.headlineMedium,
-                fontWeight = FontWeight.Bold,
-                color = MaterialTheme.colorScheme.onBackground,
-            )
-
-            Spacer(modifier = Modifier.height(8.dp))
-
-            Text(
-                text = "Content blocker is running",
-                style = MaterialTheme.typography.bodyLarge,
-                color = MaterialTheme.colorScheme.onSurfaceVariant,
-                textAlign = TextAlign.Center,
-            )
-
-            Spacer(modifier = Modifier.height(24.dp))
-
+            val enabledCount = trackedPackages.count { it.isEnabled }
             Card(
                 modifier = Modifier.fillMaxWidth(),
                 colors = CardDefaults.cardColors(
@@ -342,17 +293,55 @@ private fun ServiceActiveContent(
                 elevation = CardDefaults.cardElevation(defaultElevation = 0.dp),
             ) {
                 Column(
-                    modifier = Modifier.padding(16.dp),
+                    modifier = Modifier.padding(20.dp),
                 ) {
-                    InfoRow(
-                        title = "Status",
-                        value = "Enabled",
-                        valueColor = MaterialTheme.colorScheme.primary,
-                    )
-                    Spacer(modifier = Modifier.height(8.dp))
-                    InfoRow(
-                        title = "Tracked Apps",
-                        value = trackedPackages.count { it.isEnabled }.toString(),
+                    Row(verticalAlignment = Alignment.CenterVertically) {
+                        Surface(
+                            modifier = Modifier.size(44.dp),
+                            shape = CircleShape,
+                            color = MaterialTheme.colorScheme.primaryContainer,
+                        ) {
+                            Icon(
+                                imageVector = Icons.Rounded.CheckCircle,
+                                contentDescription = null,
+                                modifier = Modifier.padding(10.dp),
+                                tint = MaterialTheme.colorScheme.primary,
+                            )
+                        }
+                        Spacer(modifier = Modifier.size(14.dp))
+                        Column {
+                            Text(
+                                text = if (enabledCount > 0) "Protection on" else "Ready to protect",
+                                style = MaterialTheme.typography.headlineSmall,
+                                fontWeight = FontWeight.Bold,
+                            )
+                            Text(
+                                text = "$enabledCount of ${trackedPackages.size} apps guarded",
+                                style = MaterialTheme.typography.bodyMedium,
+                                color = MaterialTheme.colorScheme.onSurfaceVariant,
+                            )
+                        }
+                    }
+                    Spacer(modifier = Modifier.height(18.dp))
+                    HorizontalDivider(color = MaterialTheme.colorScheme.outlineVariant)
+                    Spacer(modifier = Modifier.height(16.dp))
+                    Row(modifier = Modifier.fillMaxWidth()) {
+                        BlockCount(
+                            label = "Today",
+                            count = blockStats.today,
+                            modifier = Modifier.weight(1f),
+                        )
+                        BlockCount(
+                            label = "Total recorded",
+                            count = blockStats.total,
+                            modifier = Modifier.weight(1f),
+                        )
+                    }
+                    Text(
+                        text = "Block actions counted from this update",
+                        style = MaterialTheme.typography.labelSmall,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant,
+                        modifier = Modifier.padding(top = 12.dp),
                     )
                 }
             }
@@ -401,6 +390,23 @@ private fun ServiceActiveContent(
                 )
             }
         }
+    }
+}
+
+@Composable
+private fun BlockCount(label: String, count: Int, modifier: Modifier = Modifier) {
+    Column(modifier = modifier) {
+        Text(
+            text = count.toString(),
+            style = MaterialTheme.typography.headlineMedium,
+            fontWeight = FontWeight.Bold,
+            color = MaterialTheme.colorScheme.primary,
+        )
+        Text(
+            label,
+            style = MaterialTheme.typography.bodySmall,
+            color = MaterialTheme.colorScheme.onSurfaceVariant,
+        )
     }
 }
 
@@ -479,6 +485,7 @@ private fun DetectionDiagnosticsSection(
     diagnostics: List<DetectionDiagnostic>,
     onClear: () -> Unit,
 ) {
+    var expanded by rememberSaveable { mutableStateOf(false) }
     Card(
         modifier = Modifier.fillMaxWidth(),
         colors = CardDefaults.cardColors(
@@ -497,90 +504,114 @@ private fun DetectionDiagnosticsSection(
                     style = MaterialTheme.typography.titleMedium,
                     fontWeight = FontWeight.Bold,
                 )
-                if (diagnostics.isNotEmpty()) {
-                    TextButton(onClick = onClear) { Text("Clear") }
+                TextButton(onClick = { expanded = !expanded }) {
+                    Text(if (expanded) "Hide" else "Details")
                 }
             }
 
-            Text(
-                text = if (diagnostics.isEmpty()) {
-                    "Open a Reel or Short, then return here to see what the detector found. No captions or account names are saved."
-                } else {
-                    "Highest detector scores from the last test window"
-                },
-                style = MaterialTheme.typography.bodySmall,
-                color = MaterialTheme.colorScheme.onSurfaceVariant,
-            )
-
-            diagnostics.forEach { diagnostic ->
-                var showIdentifiers by rememberSaveable(diagnostic.packageName) {
-                    mutableStateOf(false)
-                }
-                Spacer(modifier = Modifier.height(12.dp))
-                val appName = when (diagnostic.packageName) {
-                    "com.google.android.youtube" -> "YouTube"
-                    "com.instagram.android" -> "Instagram"
-                    "com.zhiliaoapp.musically" -> "TikTok"
-                    else -> diagnostic.packageName
-                }
+            if (!expanded) {
+                val latest = diagnostics.maxByOrNull { it.timestampMillis }
                 Text(
-                    text = "$appName  ${diagnostic.score}/${diagnostic.threshold}",
-                    style = MaterialTheme.typography.titleSmall,
-                    fontWeight = FontWeight.SemiBold,
-                    color = if (diagnostic.score >= diagnostic.threshold) {
-                        MaterialTheme.colorScheme.primary
+                    text = if (latest == null) {
+                        "See how the blocker responds when you test a Reel or Short."
                     } else {
-                        MaterialTheme.colorScheme.onSurface
+                        val appName = when (latest.packageName) {
+                            "com.google.android.youtube" -> "YouTube"
+                            "com.instagram.android" -> "Instagram"
+                            "com.zhiliaoapp.musically" -> "TikTok"
+                            else -> latest.packageName.substringAfterLast('.')
+                        }
+                        "Last check: $appName · " +
+                            "${latest.score}/${latest.threshold}"
                     },
-                )
-                Text(
-                    text = diagnostic.reasons.ifEmpty { listOf("No matching signals") }.joinToString(" · "),
                     style = MaterialTheme.typography.bodySmall,
                     color = MaterialTheme.colorScheme.onSurfaceVariant,
                 )
-                val actionLabel = when (diagnostic.action) {
-                    BlockAction.BACK -> "Go Back"
-                    BlockAction.HOME -> "Go to Home"
-                    BlockAction.SKIP_REEL -> "Swipe past Reel"
+            } else {
+                if (diagnostics.isNotEmpty()) {
+                    TextButton(onClick = onClear) { Text("Clear results") }
                 }
-                val statusLabel = when (diagnostic.actionStatus) {
-                    DetectionActionStatus.BELOW_THRESHOLD -> "No action: below threshold"
-                    DetectionActionStatus.READY -> "Blocking decision: $actionLabel"
-                    DetectionActionStatus.COOLDOWN -> "No action: waiting for cooldown"
-                    DetectionActionStatus.FEED_SCROLL_SENT -> "Home feed scroll requested"
-                    DetectionActionStatus.PERFORMED -> if (diagnostic.action == BlockAction.SKIP_REEL) {
-                        "Android completed the swipe gesture"
-                    } else {
-                        "$actionLabel action completed"
-                    }
-                    DetectionActionStatus.FAILED -> "$actionLabel action failed"
-                }
+
                 Text(
-                    text = statusLabel,
-                    style = MaterialTheme.typography.bodySmall,
-                    color = when (diagnostic.actionStatus) {
-                        DetectionActionStatus.FAILED -> MaterialTheme.colorScheme.error
-                        DetectionActionStatus.READY,
-                        DetectionActionStatus.FEED_SCROLL_SENT,
-                        DetectionActionStatus.PERFORMED ->
-                            MaterialTheme.colorScheme.primary
-                        DetectionActionStatus.BELOW_THRESHOLD, DetectionActionStatus.COOLDOWN ->
-                            MaterialTheme.colorScheme.onSurfaceVariant
+                    text = if (diagnostics.isEmpty()) {
+                        "Open a Reel or Short, then return here to see what the detector found. No captions or account names are saved."
+                    } else {
+                        "Highest detector scores from the last test window"
                     },
+                    style = MaterialTheme.typography.bodySmall,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant,
                 )
-                if (diagnostic.identifiers.isNotEmpty()) {
-                    TextButton(onClick = { showIdentifiers = !showIdentifiers }) {
-                        Text(
-                            if (showIdentifiers) "Hide interface IDs"
-                            else "Show ${diagnostic.identifiers.size} interface IDs",
-                        )
+
+                diagnostics.forEach { diagnostic ->
+                    var showIdentifiers by rememberSaveable(diagnostic.packageName) {
+                        mutableStateOf(false)
                     }
-                    if (showIdentifiers) {
-                        Text(
-                            text = diagnostic.identifiers.joinToString(),
-                            style = MaterialTheme.typography.labelSmall,
-                            color = MaterialTheme.colorScheme.onSurfaceVariant,
-                        )
+                    Spacer(modifier = Modifier.height(12.dp))
+                    val appName = when (diagnostic.packageName) {
+                        "com.google.android.youtube" -> "YouTube"
+                        "com.instagram.android" -> "Instagram"
+                        "com.zhiliaoapp.musically" -> "TikTok"
+                        else -> diagnostic.packageName
+                    }
+                    Text(
+                        text = "$appName  ${diagnostic.score}/${diagnostic.threshold}",
+                        style = MaterialTheme.typography.titleSmall,
+                        fontWeight = FontWeight.SemiBold,
+                        color = if (diagnostic.score >= diagnostic.threshold) {
+                            MaterialTheme.colorScheme.primary
+                        } else {
+                            MaterialTheme.colorScheme.onSurface
+                        },
+                    )
+                    Text(
+                        text = diagnostic.reasons.ifEmpty { listOf("No matching signals") }.joinToString(" · "),
+                        style = MaterialTheme.typography.bodySmall,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant,
+                    )
+                    val actionLabel = when (diagnostic.action) {
+                        BlockAction.BACK -> "Go Back"
+                        BlockAction.HOME -> "Go to Home"
+                        BlockAction.SKIP_REEL -> "Swipe past Reel"
+                    }
+                    val statusLabel = when (diagnostic.actionStatus) {
+                        DetectionActionStatus.BELOW_THRESHOLD -> "No action: below threshold"
+                        DetectionActionStatus.READY -> "Blocking decision: $actionLabel"
+                        DetectionActionStatus.COOLDOWN -> "No action: waiting for cooldown"
+                        DetectionActionStatus.FEED_SCROLL_SENT -> "Home feed scroll requested"
+                        DetectionActionStatus.PERFORMED -> if (diagnostic.action == BlockAction.SKIP_REEL) {
+                            "Android completed the swipe gesture"
+                        } else {
+                            "$actionLabel action completed"
+                        }
+                        DetectionActionStatus.FAILED -> "$actionLabel action failed"
+                    }
+                    Text(
+                        text = statusLabel,
+                        style = MaterialTheme.typography.bodySmall,
+                        color = when (diagnostic.actionStatus) {
+                            DetectionActionStatus.FAILED -> MaterialTheme.colorScheme.error
+                            DetectionActionStatus.READY,
+                            DetectionActionStatus.FEED_SCROLL_SENT,
+                            DetectionActionStatus.PERFORMED ->
+                                MaterialTheme.colorScheme.primary
+                            DetectionActionStatus.BELOW_THRESHOLD, DetectionActionStatus.COOLDOWN ->
+                                MaterialTheme.colorScheme.onSurfaceVariant
+                        },
+                    )
+                    if (diagnostic.identifiers.isNotEmpty()) {
+                        TextButton(onClick = { showIdentifiers = !showIdentifiers }) {
+                            Text(
+                                if (showIdentifiers) "Hide interface IDs"
+                                else "Show ${diagnostic.identifiers.size} interface IDs",
+                            )
+                        }
+                        if (showIdentifiers) {
+                            Text(
+                                text = diagnostic.identifiers.joinToString(),
+                                style = MaterialTheme.typography.labelSmall,
+                                color = MaterialTheme.colorScheme.onSurfaceVariant,
+                            )
+                        }
                     }
                 }
             }
@@ -714,35 +745,6 @@ private fun SetupRequiredContent(
                 )
             }
         }
-    }
-}
-
-/**
- * Displays a title-value pair in the info card.
- *
- * @param title The label text
- * @param value The value text
- * @param valueColor Color for the value text
- */
-@Composable
-private fun InfoRow(
-    title: String,
-    value: String,
-    valueColor: Color = MaterialTheme.colorScheme.onSurfaceVariant,
-) {
-    Column {
-        Text(
-            text = title,
-            style = MaterialTheme.typography.bodySmall,
-            color = MaterialTheme.colorScheme.onSurfaceVariant.copy(alpha = 0.7f),
-        )
-        Spacer(modifier = Modifier.height(4.dp))
-        Text(
-            text = value,
-            style = MaterialTheme.typography.bodyLarge,
-            fontWeight = FontWeight.SemiBold,
-            color = valueColor,
-        )
     }
 }
 

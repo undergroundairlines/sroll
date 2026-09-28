@@ -13,6 +13,7 @@ import androidx.lifecycle.viewModelScope
 import app.scrollguard.models.ScreenTimeReport
 import app.scrollguard.models.UsagePeriod
 import app.scrollguard.services.ScreenTimeRepository
+import app.scrollguard.services.ScreenTimeGoalStore
 import app.scrollguard.widgets.ScreenTimeWidgetUpdater
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.Job
@@ -29,11 +30,15 @@ data class ScreenTimeState(
     val selectedPeriod: UsagePeriod = UsagePeriod.DAY,
     val report: ScreenTimeReport? = null,
     val errorMessage: String? = null,
+    val dailyGoalMinutes: Int = 0,
 )
 
 class ScreenTimeViewModel(application: Application) : AndroidViewModel(application) {
     private val repository = ScreenTimeRepository(application)
-    private val _state = MutableStateFlow(ScreenTimeState())
+    private val goalStore = ScreenTimeGoalStore(application)
+    private val _state = MutableStateFlow(
+        ScreenTimeState(dailyGoalMinutes = goalStore.getMinutes()),
+    )
     val state: StateFlow<ScreenTimeState> = _state.asStateFlow()
     private var refreshJob: Job? = null
 
@@ -45,6 +50,11 @@ class ScreenTimeViewModel(application: Application) : AndroidViewModel(applicati
         if (_state.value.selectedPeriod == period) return
         _state.update { it.copy(selectedPeriod = period, report = null) }
         refresh()
+    }
+
+    fun setDailyGoalMinutes(minutes: Int) {
+        goalStore.setMinutes(minutes)
+        _state.update { it.copy(dailyGoalMinutes = goalStore.getMinutes()) }
     }
 
     fun refresh() {

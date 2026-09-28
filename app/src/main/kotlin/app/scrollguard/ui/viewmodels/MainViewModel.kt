@@ -23,6 +23,8 @@ import androidx.lifecycle.viewModelScope
 import app.scrollguard.models.DetectionDiagnostic
 import app.scrollguard.models.TrackedPackage
 import app.scrollguard.services.DetectionDiagnostics
+import app.scrollguard.services.BlockStats
+import app.scrollguard.services.BlockStatsStore
 import app.scrollguard.utils.AccessibilityServiceManager
 import app.scrollguard.utils.StrictModePolicy
 import app.scrollguard.utils.UserPreferencesProvider
@@ -49,6 +51,7 @@ data class ServiceState(
     val isChecking: Boolean = false,
     val trackedPackages: List<TrackedPackage> = emptyList(),
     val diagnostics: List<DetectionDiagnostic> = emptyList(),
+    val blockStats: BlockStats = BlockStats(),
     val strictModeEnabled: Boolean = false,
     val strictModePendingTarget: String? = null,
     val strictModeRemainingSeconds: Long = 0L,
@@ -73,6 +76,7 @@ class MainViewModel(
     }
 
     private val userPreferencesProvider = UserPreferencesProvider(application)
+    private val blockStatsStore = BlockStatsStore(application)
 
     private val _serviceState = MutableStateFlow(ServiceState())
     val serviceState: StateFlow<ServiceState> = _serviceState.asStateFlow()
@@ -262,6 +266,7 @@ class MainViewModel(
      */
     fun onResume(context: Context) {
         Timber.d("ViewModel onResume - checking permission")
+        _serviceState.update { it.copy(blockStats = blockStatsStore.snapshot()) }
         checkPermission(context)
     }
 
