@@ -7,8 +7,9 @@
 
 package app.scrollguard.services
 
-import app.scrollguard.models.DetectionDiagnostic
+import app.scrollguard.models.BlockAction
 import app.scrollguard.models.DetectionActionStatus
+import app.scrollguard.models.DetectionDiagnostic
 import app.scrollguard.models.DetectionResult
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.asStateFlow
@@ -44,16 +45,33 @@ object DetectionDiagnostics {
                 now - previous.timestampMillis > SAMPLE_WINDOW_MILLIS ||
                 record.score >= previous.score
             ) {
-                current + (result.packageName to record)
+                val priorOutcome = previous?.actionStatus
+                val preserveOutcome = previous != null &&
+                    now - previous.timestampMillis <= SAMPLE_WINDOW_MILLIS &&
+                    previous.action == result.action &&
+                    priorOutcome != null && isCompletedOutcome(priorOutcome)
+                current + (result.packageName to if (preserveOutcome) {
+                    record.copy(actionStatus = priorOutcome ?: record.actionStatus)
+                } else {
+                    record
+                })
             } else {
                 current
             }
         }
     }
 
-    fun reportActionStatus(packageName: String, status: DetectionActionStatus) {
+    fun reportActionStatus(
+        packageName: String,
+        action: BlockAction,
+        status: DetectionActionStatus,
+    ) {
         _records.update { current ->
             val previous = current[packageName] ?: return@update current
+            if (previous.action != action) return@update current
+            if (status == DetectionActionStatus.COOLDOWN &&
+                isCompletedOutcome(previous.actionStatus)
+            ) return@update current
             current + (packageName to previous.copy(actionStatus = status))
         }
     }
@@ -61,4 +79,9 @@ object DetectionDiagnostics {
     fun clear() {
         _records.value = emptyMap()
     }
+
+    private fun isCompletedOutcome(status: DetectionActionStatus): Boolean =
+        status == DetectionActionStatus.PERFORMED ||
+            status == DetectionActionStatus.FEED_SCROLL_SENT ||
+            status == DetectionActionStatus.FAILED
 }

@@ -513,6 +513,9 @@ private fun DetectionDiagnosticsSection(
             )
 
             diagnostics.forEach { diagnostic ->
+                var showIdentifiers by rememberSaveable(diagnostic.packageName) {
+                    mutableStateOf(false)
+                }
                 Spacer(modifier = Modifier.height(12.dp))
                 val appName = when (diagnostic.packageName) {
                     "com.google.android.youtube" -> "YouTube"
@@ -544,6 +547,7 @@ private fun DetectionDiagnosticsSection(
                     DetectionActionStatus.BELOW_THRESHOLD -> "No action: below threshold"
                     DetectionActionStatus.READY -> "Blocking decision: $actionLabel"
                     DetectionActionStatus.COOLDOWN -> "No action: waiting for cooldown"
+                    DetectionActionStatus.FEED_SCROLL_SENT -> "Home feed scroll requested"
                     DetectionActionStatus.PERFORMED -> if (diagnostic.action == BlockAction.SKIP_REEL) {
                         "Android completed the swipe gesture"
                     } else {
@@ -556,18 +560,28 @@ private fun DetectionDiagnosticsSection(
                     style = MaterialTheme.typography.bodySmall,
                     color = when (diagnostic.actionStatus) {
                         DetectionActionStatus.FAILED -> MaterialTheme.colorScheme.error
-                        DetectionActionStatus.READY, DetectionActionStatus.PERFORMED ->
+                        DetectionActionStatus.READY,
+                        DetectionActionStatus.FEED_SCROLL_SENT,
+                        DetectionActionStatus.PERFORMED ->
                             MaterialTheme.colorScheme.primary
                         DetectionActionStatus.BELOW_THRESHOLD, DetectionActionStatus.COOLDOWN ->
                             MaterialTheme.colorScheme.onSurfaceVariant
                     },
                 )
                 if (diagnostic.identifiers.isNotEmpty()) {
-                    Text(
-                        text = "IDs: ${diagnostic.identifiers.joinToString()}",
-                        style = MaterialTheme.typography.labelSmall,
-                        color = MaterialTheme.colorScheme.onSurfaceVariant.copy(alpha = 0.7f),
-                    )
+                    TextButton(onClick = { showIdentifiers = !showIdentifiers }) {
+                        Text(
+                            if (showIdentifiers) "Hide interface IDs"
+                            else "Show ${diagnostic.identifiers.size} interface IDs",
+                        )
+                    }
+                    if (showIdentifiers) {
+                        Text(
+                            text = diagnostic.identifiers.joinToString(),
+                            style = MaterialTheme.typography.labelSmall,
+                            color = MaterialTheme.colorScheme.onSurfaceVariant,
+                        )
+                    }
                 }
             }
         }

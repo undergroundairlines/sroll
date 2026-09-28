@@ -43,9 +43,7 @@ class ExactUsageReader(context: Context) {
         val lookbackStart = (startMillis - LOOKBACK_MILLIS).coerceAtLeast(0L)
         val events = manager.queryEvents(lookbackStart, endMillis)
         val event = UsageEvents.Event()
-        val activeActivities = mutableMapOf<String, MutableSet<String>>()
-        val activeSince = mutableMapOf<String, Long>()
-        val sessions = mutableListOf<UsageSession>()
+        val foreground = ForegroundSessionTracker(startMillis, endMillis)
         var screenInteractive = false
         var screenInteractiveSince = 0L
         var screenOnMillis = 0L
@@ -57,25 +55,18 @@ class ExactUsageReader(context: Context) {
             when (event.eventType) {
                 UsageEvents.Event.MOVE_TO_FOREGROUND -> {
                     val packageName = event.packageName ?: continue
-                    val activities = activeActivities.getOrPut(packageName) { mutableSetOf() }
-                    if (activities.isEmpty()) activeSince[packageName] = timestamp
-                    activities += event.className ?: PACKAGE_ACTIVITY_KEY
+                    foreground.resume(packageName, event.className?.toString(), timestamp)
                 }
 
                 UsageEvents.Event.MOVE_TO_BACKGROUND,
                 UsageEvents.Event.ACTIVITY_STOPPED,
                 -> {
                     val packageName = event.packageName ?: continue
-                    val activities = activeActivities[packageName] ?: continue
-                    activities -= event.className ?: PACKAGE_ACTIVITY_KEY
-                    if (activities.isEmpty()) {
-                        val started = activeSince.remove(packageName) ?: timestamp
-                        addClippedSession(sessions, packageName, started, timestamp, startMillis, endMillis)
-                        activeActivities.remove(packageName)
-                    }
+                    foreground.pause(packageName, event.className?.toString(), timestamp)
                 }
 
                 UsageEvents.Event.SCREEN_INTERACTIVE -> {
+                    foreground.screenOn(timestamp)
                     if (!screenInteractive) {
                         screenInteractive = true
                         screenInteractiveSince = timestamp
@@ -84,6 +75,7 @@ class ExactUsageReader(context: Context) {
                 }
 
                 UsageEvents.Event.SCREEN_NON_INTERACTIVE -> {
+                    foreground.screenOff(timestamp)
                     if (screenInteractive) {
                         screenOnMillis += clippedDuration(
                             screenInteractiveSince,
@@ -97,9 +89,7 @@ class ExactUsageReader(context: Context) {
             }
         }
 
-        activeSince.forEach { (packageName, started) ->
-            addClippedSession(sessions, packageName, started, endMillis, startMillis, endMillis)
-        }
+        val sessions = foreground.finish()
         if (screenInteractive) {
             screenOnMillis += clippedDuration(
                 screenInteractiveSince,
@@ -115,21 +105,6 @@ class ExactUsageReader(context: Context) {
         return ExactUsageSnapshot(durations, sessions, screenOnMillis, pickups)
     }
 
-    private fun addClippedSession(
-        sessions: MutableList<UsageSession>,
-        packageName: String,
-        sessionStart: Long,
-        sessionEnd: Long,
-        rangeStart: Long,
-        rangeEnd: Long,
-    ) {
-        val clippedStart = max(sessionStart, rangeStart)
-        val clippedEnd = min(sessionEnd, rangeEnd)
-        if (clippedEnd > clippedStart) {
-            sessions += UsageSession(packageName, clippedStart, clippedEnd)
-        }
-    }
-
     private fun clippedDuration(
         sessionStart: Long,
         sessionEnd: Long,
@@ -139,6 +114,63 @@ class ExactUsageReader(context: Context) {
 
     private companion object {
         const val LOOKBACK_MILLIS = 24L * 60L * 60L * 1000L
-        const val PACKAGE_ACTIVITY_KEY = "__package_activity__"
+    }
+}
+
+/** Keeps one focused foreground app at a time, even when Android omits a pause event. */
+internal class ForegroundSessionTracker(
+    private val rangeStart: Long,
+    private val rangeEnd: Long,
+) {
+    private val sessions = mutableListOf<UsageSession>()
+    private var packageName: String? = null
+    private var activityName: String? = null
+    private var sessionStart: Long? = null
+    private var screenIsOff = false
+
+    fun resume(nextPackage: String, nextActivity: String?, timestamp: Long) {
+        if (packageName != nextPackage) {
+            closeSession(timestamp)
+            packageName = nextPackage
+            sessionStart = if (screenIsOff) null else timestamp
+        } else if (sessionStart == null && !screenIsOff) {
+            sessionStart = timestamp
+        }
+        activityName = nextActivity
+    }
+
+    fun pause(pausedPackage: String, pausedActivity: String?, timestamp: Long) {
+        if (packageName != pausedPackage) return
+        // The old activity may stop after a new activity in the same app has resumed.
+        if (pausedActivity != null && activityName != null && pausedActivity != activityName) return
+        closeSession(timestamp)
+        packageName = null
+        activityName = null
+    }
+
+    fun screenOff(timestamp: Long) {
+        closeSession(timestamp)
+        screenIsOff = true
+    }
+
+    fun screenOn(timestamp: Long) {
+        screenIsOff = false
+        if (packageName != null && sessionStart == null) sessionStart = timestamp
+    }
+
+    fun finish(): List<UsageSession> {
+        closeSession(rangeEnd)
+        return sessions.toList()
+    }
+
+    private fun closeSession(timestamp: Long) {
+        val activePackage = packageName ?: return
+        val start = sessionStart ?: return
+        val clippedStart = max(start, rangeStart)
+        val clippedEnd = min(timestamp, rangeEnd)
+        if (clippedEnd > clippedStart) {
+            sessions += UsageSession(activePackage, clippedStart, clippedEnd)
+        }
+        sessionStart = null
     }
 }

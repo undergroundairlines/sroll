@@ -56,7 +56,11 @@ class ScreenTimeViewModel(application: Application) : AndroidViewModel(applicati
                 errorMessage = null,
             )
         }
-        if (!hasAccess) return
+        if (!hasAccess) {
+            refreshJob?.cancel()
+            _state.update { it.copy(isLoading = false, report = null) }
+            return
+        }
 
         refreshJob?.cancel()
         refreshJob = viewModelScope.launch {
