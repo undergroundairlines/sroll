@@ -42,7 +42,7 @@ object PackageConstants {
         TrackedPackage(
             packageName = INSTAGRAM_PACKAGE,
             displayName = "Instagram",
-            description = "Block Instagram Reels",
+            description = "Skip Home Reels; block the Reels tab",
             isEnabled = false,
         ),
         TrackedPackage(

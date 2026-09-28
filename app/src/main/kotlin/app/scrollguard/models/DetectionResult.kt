@@ -18,6 +18,7 @@ enum class DetectionActionStatus {
     BELOW_THRESHOLD,
     READY,
     COOLDOWN,
+    FEED_SCROLL_SENT,
     PERFORMED,
     FAILED,
 }

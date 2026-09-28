@@ -25,6 +25,7 @@ import android.os.SystemClock
 import android.util.DisplayMetrics
 import android.view.WindowManager
 import android.view.accessibility.AccessibilityEvent
+import android.view.accessibility.AccessibilityNodeInfo
 import app.scrollguard.models.BlockAction
 import app.scrollguard.models.DetectionActionStatus
 import app.scrollguard.services.detectors.InstagramReelsDetector
@@ -40,6 +41,8 @@ import kotlinx.coroutines.flow.launchIn
 import kotlinx.coroutines.flow.onEach
 import timber.log.Timber
 import java.util.concurrent.ConcurrentHashMap
+import java.util.ArrayDeque
+import java.util.Locale
 
 /**
  * Accessibility service that detects and blocks short-form content across supported apps.
@@ -122,17 +125,19 @@ class ShortFormContentBlockerService : AccessibilityService() {
                 return
             }
 
-            val result = detector.detect(event, rootInActiveWindow, resources)
+            val windowRoot = rootInActiveWindow
+            val result = detector.detect(event, windowRoot, resources)
             DetectionDiagnostics.report(result)
             if (result.shouldBlock) {
                 Timber.i("[$packageName] Short-form content detected!")
                 val key = "${packageName}_content_detected"
                 if (shouldPerformAction(key)) {
-                    handleShortFormContentDetected(packageName, result.action)
+                    handleShortFormContentDetected(packageName, result.action, windowRoot, event)
                 } else {
                     Timber.d("[$packageName] Action skipped due to cooldown")
                     DetectionDiagnostics.reportActionStatus(
                         packageName,
+                        result.action,
                         DetectionActionStatus.COOLDOWN,
                     )
                 }
@@ -150,15 +155,16 @@ class ShortFormContentBlockerService : AccessibilityService() {
         job.cancel()
     }
 
-    /**
-     * Handles detection by performing the detector's requested global navigation action.
-     *
-     * @param packageName The package name of the app where content was detected
-     */
-    private fun handleShortFormContentDetected(packageName: String, action: BlockAction) {
+    /** Performs the detector's requested navigation or Home-feed scroll action. */
+    private fun handleShortFormContentDetected(
+        packageName: String,
+        action: BlockAction,
+        windowRoot: AccessibilityNodeInfo?,
+        event: AccessibilityEvent,
+    ) {
         if (action == BlockAction.SKIP_REEL) {
             Timber.i("[$packageName] Scrolling past in-feed Reel")
-            skipFeedReel(packageName)
+            skipFeedReel(packageName, windowRoot, event)
             return
         }
         val globalAction = when (action) {
@@ -170,6 +176,7 @@ class ShortFormContentBlockerService : AccessibilityService() {
         val success = performGlobalAction(globalAction)
         DetectionDiagnostics.reportActionStatus(
             packageName,
+            action,
             if (success) DetectionActionStatus.PERFORMED else DetectionActionStatus.FAILED,
         )
         if (success) {
@@ -179,8 +186,22 @@ class ShortFormContentBlockerService : AccessibilityService() {
         }
     }
 
-    /** Swipe upward once so Instagram advances beyond the current Home-feed Reel card. */
-    private fun skipFeedReel(packageName: String) {
+    /** Scroll the actual Home feed when Instagram exposes it, then fall back to a swipe. */
+    private fun skipFeedReel(
+        packageName: String,
+        windowRoot: AccessibilityNodeInfo?,
+        event: AccessibilityEvent,
+    ) {
+        val source = runCatching { event.source }.getOrNull()
+        if (scrollHomeFeed(windowRoot, source)) {
+            DetectionDiagnostics.reportActionStatus(
+                packageName,
+                BlockAction.SKIP_REEL,
+                DetectionActionStatus.FEED_SCROLL_SENT,
+            )
+            return
+        }
+
         val metrics = DisplayMetrics()
         @Suppress("DEPRECATION")
         (getSystemService(WINDOW_SERVICE) as WindowManager).defaultDisplay.getRealMetrics(metrics)
@@ -198,6 +219,7 @@ class ShortFormContentBlockerService : AccessibilityService() {
                 override fun onCompleted(gestureDescription: GestureDescription?) {
                     DetectionDiagnostics.reportActionStatus(
                         packageName,
+                        BlockAction.SKIP_REEL,
                         DetectionActionStatus.PERFORMED,
                     )
                 }
@@ -205,6 +227,7 @@ class ShortFormContentBlockerService : AccessibilityService() {
                 override fun onCancelled(gestureDescription: GestureDescription?) {
                     DetectionDiagnostics.reportActionStatus(
                         packageName,
+                        BlockAction.SKIP_REEL,
                         DetectionActionStatus.FAILED,
                     )
                 }
@@ -212,8 +235,52 @@ class ShortFormContentBlockerService : AccessibilityService() {
             null,
         )
         if (!dispatched) {
-            DetectionDiagnostics.reportActionStatus(packageName, DetectionActionStatus.FAILED)
+            DetectionDiagnostics.reportActionStatus(
+                packageName,
+                BlockAction.SKIP_REEL,
+                DetectionActionStatus.FAILED,
+            )
         }
+    }
+
+    private fun scrollHomeFeed(vararg roots: AccessibilityNodeInfo?): Boolean {
+        val queue = ArrayDeque<AccessibilityNodeInfo>()
+        roots.filterNotNull()
+            .filter { it.packageName?.toString() == "com.instagram.android" }
+            .forEach(queue::addLast)
+        var visited = 0
+        while (queue.isNotEmpty() && visited++ < 350) {
+            val node = queue.removeFirst()
+            if (node.isVisibleToUser &&
+                node.viewIdResourceName.orEmpty().contains("row_feed_profile_header")
+            ) {
+                var parent = node.parent
+                while (parent != null) {
+                    val id = parent.viewIdResourceName.orEmpty().lowercase(Locale.ROOT)
+                    val className = parent.className?.toString().orEmpty().lowercase(Locale.ROOT)
+                    val feedList = id.contains("feed") || id.endsWith("/list") ||
+                        className.contains("recyclerview") || className.contains("listview")
+                    val mediaPager = id.contains("clip") || id.contains("reel") ||
+                        id.contains("story") || id.contains("pager")
+                    if (parent.isScrollable && feedList && !mediaPager) {
+                        val bounds = android.graphics.Rect()
+                        parent.getBoundsInScreen(bounds)
+                        if (bounds.height() > bounds.width() &&
+                            runCatching {
+                                parent.performAction(AccessibilityNodeInfo.ACTION_SCROLL_FORWARD)
+                            }.getOrDefault(false)
+                        ) {
+                            return true
+                        }
+                    }
+                    parent = parent.parent
+                }
+            }
+            for (index in 0 until node.childCount) {
+                node.getChild(index)?.let(queue::addLast)
+            }
+        }
+        return false
     }
 
     /**

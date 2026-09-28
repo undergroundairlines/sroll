@@ -34,11 +34,31 @@ class DetectionDiagnosticsTest {
 
         DetectionDiagnostics.reportActionStatus(
             "com.instagram.android",
+            BlockAction.SKIP_REEL,
             DetectionActionStatus.PERFORMED,
         )
 
         record = DetectionDiagnostics.records.value.getValue("com.instagram.android")
         assertEquals(DetectionActionStatus.PERFORMED, record.actionStatus)
+
+        DetectionDiagnostics.report(
+            DetectionResult(
+                packageName = "com.instagram.android",
+                score = 20,
+                threshold = 7,
+                reasons = listOf("Reel card in Home feed"),
+                action = BlockAction.SKIP_REEL,
+            ),
+        )
+        DetectionDiagnostics.reportActionStatus(
+            "com.instagram.android",
+            BlockAction.SKIP_REEL,
+            DetectionActionStatus.COOLDOWN,
+        )
+        assertEquals(
+            DetectionActionStatus.PERFORMED,
+            DetectionDiagnostics.records.value.getValue("com.instagram.android").actionStatus,
+        )
     }
 
     @Test

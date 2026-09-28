@@ -57,6 +57,8 @@ import androidx.compose.ui.graphics.ImageBitmap
 import androidx.compose.ui.graphics.asImageBitmap
 import androidx.compose.ui.platform.LocalConfiguration
 import androidx.compose.ui.platform.LocalContext
+import androidx.compose.ui.semantics.contentDescription
+import androidx.compose.ui.semantics.semantics
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.text.style.TextOverflow
@@ -453,6 +455,9 @@ private fun PeriodSwitcher(selected: UsagePeriod, onSelected: (UsagePeriod) -> U
 
 @Composable
 private fun UsageBarChart(buckets: List<UsageBucket>, title: String) {
+    var selectedIndex by remember(title, buckets) { mutableStateOf<Int?>(null) }
+    val selectedBucket = selectedIndex?.let { buckets.getOrNull(it) }
+        ?: buckets.maxByOrNull { it.durationMillis }
     Card(
         modifier = Modifier.fillMaxWidth(),
         colors = CardDefaults.cardColors(
@@ -461,6 +466,15 @@ private fun UsageBarChart(buckets: List<UsageBucket>, title: String) {
     ) {
         Column(modifier = Modifier.padding(18.dp)) {
             Text(title, style = MaterialTheme.typography.titleMedium, fontWeight = FontWeight.Bold)
+            selectedBucket?.let { bucket ->
+                Text(
+                    text = "${if (selectedIndex == null) "Peak" else "Selected"}: " +
+                        "${bucket.label} · ${ScreenTimeFormatting.duration(bucket.durationMillis)}",
+                    style = MaterialTheme.typography.bodyMedium,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant,
+                    modifier = Modifier.padding(top = 4.dp),
+                )
+            }
             Spacer(modifier = Modifier.height(14.dp))
             val maxDuration = buckets.maxOfOrNull { it.durationMillis }?.coerceAtLeast(1L) ?: 1L
             Row(
@@ -478,7 +492,13 @@ private fun UsageBarChart(buckets: List<UsageBucket>, title: String) {
                         else -> 5
                     }
                     Column(
-                        modifier = Modifier.width(if (buckets.size <= 7) 36.dp else 22.dp),
+                        modifier = Modifier
+                            .width(if (buckets.size <= 7) 36.dp else 22.dp)
+                            .clickable { selectedIndex = index }
+                            .semantics {
+                                contentDescription = "${bucket.label}, " +
+                                    ScreenTimeFormatting.duration(bucket.durationMillis)
+                            },
                         horizontalAlignment = Alignment.CenterHorizontally,
                         verticalArrangement = Arrangement.Bottom,
                     ) {
@@ -499,7 +519,13 @@ private fun UsageBarChart(buckets: List<UsageBucket>, title: String) {
                                         .dp,
                                 )
                                 .clip(RoundedCornerShape(4.dp))
-                                .background(MaterialTheme.colorScheme.primary),
+                                .background(
+                                    if (selectedIndex == null || selectedIndex == index) {
+                                        MaterialTheme.colorScheme.primary
+                                    } else {
+                                        MaterialTheme.colorScheme.primary.copy(alpha = 0.45f)
+                                    },
+                                ),
                         )
                         Spacer(modifier = Modifier.height(6.dp))
                         Text(
@@ -695,13 +721,13 @@ private fun compactDuration(millis: Long): String {
 }
 
 private fun comparisonText(report: ScreenTimeReport): String {
-    if (report.period == UsagePeriod.ALL) return "Everything recorded on this phone"
+    if (report.period == UsagePeriod.ALL) return "Available usage history"
     val change = report.changePercentage ?: return "No earlier data to compare"
     val comparison = when (report.period) {
         UsagePeriod.DAY -> "the same time yesterday"
         UsagePeriod.WEEK -> "the previous 7 days"
         UsagePeriod.MONTH -> "the previous 30 days"
-        UsagePeriod.ALL -> return "Everything recorded on this phone"
+        UsagePeriod.ALL -> return "Available usage history"
     }
     return when {
         change > 0 -> "${abs(change)}% more than $comparison"

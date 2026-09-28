@@ -29,6 +29,8 @@ class ScreenTimeRepository(private val context: Context) {
     private val archive = ScreenTimeArchive(context)
     private val packageManager = context.packageManager
     private val impactBaselineStore = ImpactBaselineStore(context)
+    private val repairPreferences =
+        context.getSharedPreferences("usage_history_repairs", Context.MODE_PRIVATE)
 
     fun hasUsageAccess(): Boolean {
         val appOps = context.getSystemService(Context.APP_OPS_SERVICE) as AppOpsManager
@@ -112,12 +114,23 @@ class ScreenTimeRepository(private val context: Context) {
         val elapsedMillis = nowMillis - installTime
         if (elapsedMillis < MINIMUM_IMPACT_WINDOW_MILLIS) return null
 
-        val baselineDurations = impactBaselineStore.load(installTime) ?: run {
-            val baseline = filtered(
+        val cachedBaseline = impactBaselineStore.load(installTime)
+        val refreshBaseline = elapsedMillis < 45L * DAY_MILLIS &&
+            !repairPreferences.getBoolean("impact_baseline_focused_v1", false)
+        val baselineDurations = if (cachedBaseline == null || refreshBaseline) {
+            val rebuilt = filtered(
                 reader.read(installTime - IMPACT_BASELINE_MILLIS, installTime),
             ).durations
-            impactBaselineStore.save(installTime, baseline)
-            baseline
+            val chosen = if (rebuilt.isNotEmpty() || cachedBaseline == null) {
+                impactBaselineStore.save(installTime, rebuilt)
+                rebuilt
+            } else {
+                cachedBaseline
+            }
+            repairPreferences.edit().putBoolean("impact_baseline_focused_v1", true).apply()
+            chosen
+        } else {
+            cachedBaseline
         }
 
         // Rewrite the installation day from the actual installation time, not midnight. This
@@ -183,6 +196,25 @@ class ScreenTimeRepository(private val context: Context) {
             )
         } else {
             archive.deleteDay(installDay)
+        }
+
+        // Earlier session reconstruction could leave an app active after it lost focus.
+        // Correct recent archived days once while Android still has their event history.
+        if (!repairPreferences.getBoolean("focused_sessions_v1", false)) {
+            var repairDay = addDays(todayStart, -14)
+            while (repairDay < todayStart) {
+                if (archive.hasDay(repairDay)) {
+                    val rangeStart = if (repairDay == installDay) installTime else repairDay
+                    val corrected = filtered(reader.read(rangeStart, addDays(repairDay, 1)))
+                    if (corrected.sessions.isNotEmpty() ||
+                        corrected.screenOnMillis > 0L || corrected.pickups > 0
+                    ) {
+                        archive.replaceDay(repairDay, corrected)
+                    }
+                }
+                repairDay = addDays(repairDay, 1)
+            }
+            repairPreferences.edit().putBoolean("focused_sessions_v1", true).apply()
         }
     }
 
