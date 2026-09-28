@@ -56,6 +56,7 @@ class ShortFormContentBlockerService : AccessibilityService() {
     private val lastActionTimestamps = ConcurrentHashMap<String, Long>()
     private val actionCooldownMillis = 1500L
     private val userPreferencesProvider by lazy { UserPreferencesProvider(applicationContext) }
+    private val blockStatsStore by lazy { BlockStatsStore(applicationContext) }
 
     @Volatile
     private var enabledPackages: Set<String> = emptySet()
@@ -180,6 +181,7 @@ class ShortFormContentBlockerService : AccessibilityService() {
             if (success) DetectionActionStatus.PERFORMED else DetectionActionStatus.FAILED,
         )
         if (success) {
+            blockStatsStore.record()
             Timber.d("[$packageName] $action action performed successfully")
         } else {
             Timber.w("[$packageName] $action action failed")
@@ -194,6 +196,7 @@ class ShortFormContentBlockerService : AccessibilityService() {
     ) {
         val source = runCatching { event.source }.getOrNull()
         if (scrollHomeFeed(windowRoot, source)) {
+            blockStatsStore.record()
             DetectionDiagnostics.reportActionStatus(
                 packageName,
                 BlockAction.SKIP_REEL,
@@ -217,6 +220,7 @@ class ShortFormContentBlockerService : AccessibilityService() {
             gesture,
             object : GestureResultCallback() {
                 override fun onCompleted(gestureDescription: GestureDescription?) {
+                    blockStatsStore.record()
                     DetectionDiagnostics.reportActionStatus(
                         packageName,
                         BlockAction.SKIP_REEL,

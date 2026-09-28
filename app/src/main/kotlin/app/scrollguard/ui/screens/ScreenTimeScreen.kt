@@ -8,11 +8,9 @@
 package app.scrollguard.ui.screens
 
 import android.content.Intent
-import android.content.pm.PackageManager
 import android.net.Uri
 import android.provider.Settings
 import androidx.activity.compose.BackHandler
-import androidx.compose.foundation.Image
 import androidx.compose.foundation.background
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.horizontalScroll
@@ -36,12 +34,14 @@ import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.rounded.ArrowBack
 import androidx.compose.material3.Button
 import androidx.compose.material3.ButtonDefaults
+import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.Card
 import androidx.compose.material3.CardDefaults
 import androidx.compose.material3.CircularProgressIndicator
 import androidx.compose.material3.Icon
 import androidx.compose.material3.LinearProgressIndicator
 import androidx.compose.material3.MaterialTheme
+import androidx.compose.material3.Slider
 import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
 import androidx.compose.runtime.Composable
@@ -53,8 +53,6 @@ import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
-import androidx.compose.ui.graphics.ImageBitmap
-import androidx.compose.ui.graphics.asImageBitmap
 import androidx.compose.ui.platform.LocalConfiguration
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.semantics.contentDescription
@@ -63,7 +61,6 @@ import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
-import androidx.core.graphics.drawable.toBitmap
 import app.scrollguard.models.AppImpact
 import app.scrollguard.models.AppUsage
 import app.scrollguard.models.ScreenTimeReport
@@ -72,17 +69,20 @@ import app.scrollguard.models.UsageBucket
 import app.scrollguard.models.UsagePeriod
 import app.scrollguard.ui.components.AppSection
 import app.scrollguard.ui.components.AppSectionSwitcher
+import app.scrollguard.ui.components.AppIcon
 import app.scrollguard.ui.viewmodels.ScreenTimeState
 import app.scrollguard.utils.ScreenTimeFormatting
 import java.text.SimpleDateFormat
 import java.util.Date
 import kotlin.math.abs
+import kotlin.math.roundToInt
 
 @Composable
 fun ScreenTimeScreen(
     state: ScreenTimeState,
     onPeriodSelected: (UsagePeriod) -> Unit,
     onRefresh: () -> Unit,
+    onGoalChange: (Int) -> Unit,
     onOpenBlocker: () -> Unit,
 ) {
     var selectedPackage by rememberSaveable { mutableStateOf<String?>(null) }
@@ -137,6 +137,8 @@ fun ScreenTimeScreen(
                     report = report,
                     onPeriodSelected = onPeriodSelected,
                     onRefresh = onRefresh,
+                    dailyGoalMinutes = state.dailyGoalMinutes,
+                    onGoalChange = onGoalChange,
                     onAppSelected = { selectedPackage = it.packageName },
                 )
             }
@@ -189,6 +191,8 @@ private fun ScreenTimeDashboard(
     report: ScreenTimeReport,
     onPeriodSelected: (UsagePeriod) -> Unit,
     onRefresh: () -> Unit,
+    dailyGoalMinutes: Int,
+    onGoalChange: (Int) -> Unit,
     onAppSelected: (AppUsage) -> Unit,
 ) {
     Text(
@@ -209,6 +213,14 @@ private fun ScreenTimeDashboard(
         color = MaterialTheme.colorScheme.onSurfaceVariant,
         textAlign = TextAlign.Center,
     )
+    report.apps.firstOrNull()?.let { topApp ->
+        Text(
+            text = "Top app: ${topApp.displayName} · ${topApp.percentage}%",
+            style = MaterialTheme.typography.bodyMedium,
+            color = MaterialTheme.colorScheme.primary,
+            modifier = Modifier.padding(top = 6.dp),
+        )
+    }
 
     Spacer(modifier = Modifier.height(18.dp))
     PeriodSwitcher(report.period, onPeriodSelected)
@@ -216,6 +228,10 @@ private fun ScreenTimeDashboard(
 
     UsageSummary(report)
     Spacer(modifier = Modifier.height(14.dp))
+    if (report.period == UsagePeriod.DAY) {
+        DailyGoalSection(report.totalMillis, dailyGoalMinutes, onGoalChange)
+        Spacer(modifier = Modifier.height(14.dp))
+    }
     report.impact?.let { impact ->
         ImpactSection(impact)
         Spacer(modifier = Modifier.height(14.dp))
@@ -225,6 +241,103 @@ private fun ScreenTimeDashboard(
     AppBreakdown(report.apps, report.totalMillis, onAppSelected)
 
     TextButton(onClick = onRefresh) { Text("Refresh exact data") }
+}
+
+@Composable
+private fun DailyGoalSection(
+    usedMillis: Long,
+    goalMinutes: Int,
+    onGoalChange: (Int) -> Unit,
+) {
+    var editing by rememberSaveable { mutableStateOf(false) }
+    var draftMinutes by remember(goalMinutes, editing) { mutableStateOf(goalMinutes.toFloat()) }
+    val goalMillis = goalMinutes * 60_000L
+    Card(
+        modifier = Modifier.fillMaxWidth(),
+        colors = CardDefaults.cardColors(
+            containerColor = MaterialTheme.colorScheme.primaryContainer,
+        ),
+    ) {
+        Column(modifier = Modifier.padding(18.dp)) {
+            Row(
+                modifier = Modifier.fillMaxWidth(),
+                horizontalArrangement = Arrangement.SpaceBetween,
+                verticalAlignment = Alignment.CenterVertically,
+            ) {
+                Text("Daily app time goal", style = MaterialTheme.typography.titleMedium, fontWeight = FontWeight.Bold)
+                TextButton(onClick = { editing = true }) {
+                    Text(if (goalMinutes == 0) "Set goal" else "Change")
+                }
+            }
+            if (goalMinutes == 0) {
+                Text(
+                    "Set a daily target and see how much app time you have left.",
+                    color = MaterialTheme.colorScheme.onSurfaceVariant,
+                )
+            } else {
+                val remaining = goalMillis - usedMillis
+                Text(
+                    text = if (remaining >= 0L) {
+                        "${ScreenTimeFormatting.duration(remaining)} left today"
+                    } else {
+                        "${ScreenTimeFormatting.duration(-remaining)} over your goal"
+                    },
+                    style = MaterialTheme.typography.headlineSmall,
+                    fontWeight = FontWeight.Bold,
+                    color = if (remaining >= 0L) {
+                        MaterialTheme.colorScheme.primary
+                    } else {
+                        MaterialTheme.colorScheme.error
+                    },
+                )
+                Spacer(modifier = Modifier.height(10.dp))
+                LinearProgressIndicator(
+                    progress = { (usedMillis.toFloat() / goalMillis.toFloat()).coerceIn(0f, 1f) },
+                    modifier = Modifier.fillMaxWidth().height(8.dp).clip(RoundedCornerShape(8.dp)),
+                )
+                Text(
+                    "${ScreenTimeFormatting.duration(usedMillis)} of " +
+                        "${ScreenTimeFormatting.duration(goalMillis)} used",
+                    style = MaterialTheme.typography.bodySmall,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant,
+                    modifier = Modifier.padding(top = 7.dp),
+                )
+            }
+        }
+    }
+
+    if (editing) {
+        AlertDialog(
+            onDismissRequest = { editing = false },
+            title = { Text("Daily app time goal") },
+            text = {
+                Column {
+                    Text(
+                        if (draftMinutes.roundToInt() == 0) "Off"
+                        else ScreenTimeFormatting.duration(draftMinutes.roundToInt() * 60_000L),
+                        style = MaterialTheme.typography.headlineSmall,
+                        fontWeight = FontWeight.Bold,
+                    )
+                    Slider(
+                        value = draftMinutes,
+                        onValueChange = { draftMinutes = it },
+                        valueRange = 0f..720f,
+                        steps = 47,
+                    )
+                    Text("Adjust in 15-minute steps, up to 12 hours. Zero turns it off.")
+                }
+            },
+            confirmButton = {
+                TextButton(onClick = {
+                    onGoalChange((draftMinutes.roundToInt() / 15) * 15)
+                    editing = false
+                }) { Text("Save") }
+            },
+            dismissButton = {
+                TextButton(onClick = { editing = false }) { Text("Cancel") }
+            },
+        )
+    }
 }
 
 @Composable
@@ -672,35 +785,6 @@ private fun AppDetailScreen(
         Spacer(modifier = Modifier.height(16.dp))
         UsageBarChart(app.buckets, "${app.displayName} usage")
         Spacer(modifier = Modifier.height(28.dp))
-    }
-}
-
-@Composable
-private fun AppIcon(packageName: String, size: Int = 42) {
-    val context = LocalContext.current
-    val icon: ImageBitmap? = remember(packageName) {
-        try {
-            context.packageManager.getApplicationIcon(packageName)
-                .toBitmap(width = 64, height = 64)
-                .asImageBitmap()
-        } catch (_: PackageManager.NameNotFoundException) {
-            null
-        } catch (_: SecurityException) {
-            null
-        }
-    }
-    if (icon != null) {
-        Image(bitmap = icon, contentDescription = null, modifier = Modifier.size(size.dp))
-    } else {
-        Box(
-            modifier = Modifier
-                .size(size.dp)
-                .clip(RoundedCornerShape(12.dp))
-                .background(MaterialTheme.colorScheme.primaryContainer),
-            contentAlignment = Alignment.Center,
-        ) {
-            Text(packageName.substringAfterLast('.').take(1).uppercase())
-        }
     }
 }
 
