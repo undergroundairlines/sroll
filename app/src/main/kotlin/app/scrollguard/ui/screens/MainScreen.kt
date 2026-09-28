@@ -76,6 +76,8 @@ import androidx.lifecycle.LifecycleEventObserver
 import androidx.lifecycle.compose.LocalLifecycleOwner
 import androidx.lifecycle.viewmodel.compose.viewModel
 import app.scrollguard.models.DetectionDiagnostic
+import app.scrollguard.models.BlockAction
+import app.scrollguard.models.DetectionActionStatus
 import app.scrollguard.models.TrackedPackage
 import app.scrollguard.ui.components.AppSection
 import app.scrollguard.ui.components.AppSectionSwitcher
@@ -532,6 +534,33 @@ private fun DetectionDiagnosticsSection(
                     text = diagnostic.reasons.ifEmpty { listOf("No matching signals") }.joinToString(" · "),
                     style = MaterialTheme.typography.bodySmall,
                     color = MaterialTheme.colorScheme.onSurfaceVariant,
+                )
+                val actionLabel = when (diagnostic.action) {
+                    BlockAction.BACK -> "Go Back"
+                    BlockAction.HOME -> "Go to Home"
+                    BlockAction.SKIP_REEL -> "Swipe past Reel"
+                }
+                val statusLabel = when (diagnostic.actionStatus) {
+                    DetectionActionStatus.BELOW_THRESHOLD -> "No action: below threshold"
+                    DetectionActionStatus.READY -> "Blocking decision: $actionLabel"
+                    DetectionActionStatus.COOLDOWN -> "No action: waiting for cooldown"
+                    DetectionActionStatus.PERFORMED -> if (diagnostic.action == BlockAction.SKIP_REEL) {
+                        "Android completed the swipe gesture"
+                    } else {
+                        "$actionLabel action completed"
+                    }
+                    DetectionActionStatus.FAILED -> "$actionLabel action failed"
+                }
+                Text(
+                    text = statusLabel,
+                    style = MaterialTheme.typography.bodySmall,
+                    color = when (diagnostic.actionStatus) {
+                        DetectionActionStatus.FAILED -> MaterialTheme.colorScheme.error
+                        DetectionActionStatus.READY, DetectionActionStatus.PERFORMED ->
+                            MaterialTheme.colorScheme.primary
+                        DetectionActionStatus.BELOW_THRESHOLD, DetectionActionStatus.COOLDOWN ->
+                            MaterialTheme.colorScheme.onSurfaceVariant
+                    },
                 )
                 if (diagnostic.identifiers.isNotEmpty()) {
                     Text(

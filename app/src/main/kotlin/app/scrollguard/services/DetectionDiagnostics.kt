@@ -8,6 +8,7 @@
 package app.scrollguard.services
 
 import app.scrollguard.models.DetectionDiagnostic
+import app.scrollguard.models.DetectionActionStatus
 import app.scrollguard.models.DetectionResult
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.asStateFlow
@@ -29,6 +30,12 @@ object DetectionDiagnostics {
             reasons = result.reasons,
             identifiers = result.identifiers,
             timestampMillis = now,
+            action = result.action,
+            actionStatus = if (result.shouldBlock) {
+                DetectionActionStatus.READY
+            } else {
+                DetectionActionStatus.BELOW_THRESHOLD
+            },
         )
         _records.update { current ->
             val previous = current[result.packageName]
@@ -41,6 +48,13 @@ object DetectionDiagnostics {
             } else {
                 current
             }
+        }
+    }
+
+    fun reportActionStatus(packageName: String, status: DetectionActionStatus) {
+        _records.update { current ->
+            val previous = current[packageName] ?: return@update current
+            current + (packageName to previous.copy(actionStatus = status))
         }
     }
 
