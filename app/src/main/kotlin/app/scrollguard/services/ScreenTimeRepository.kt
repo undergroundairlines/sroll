@@ -201,7 +201,7 @@ class ScreenTimeRepository(private val context: Context) {
         // Earlier session reconstruction could leave an app active after it lost focus.
         // Correct recent archived days once while Android still has their event history.
         if (!repairPreferences.getBoolean("focused_sessions_v1", false)) {
-            var repairDay = addDays(todayStart, -14)
+            var repairDay = addDays(todayStart, -30)
             while (repairDay < todayStart) {
                 if (archive.hasDay(repairDay)) {
                     val rangeStart = if (repairDay == installDay) installTime else repairDay
