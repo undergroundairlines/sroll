@@ -14,6 +14,14 @@ enum class BlockAction {
     SKIP_REEL,
 }
 
+enum class DetectionActionStatus {
+    BELOW_THRESHOLD,
+    READY,
+    COOLDOWN,
+    PERFORMED,
+    FAILED,
+}
+
 data class DetectionResult(
     val packageName: String,
     val score: Int,
@@ -33,4 +41,6 @@ data class DetectionDiagnostic(
     val reasons: List<String>,
     val identifiers: List<String>,
     val timestampMillis: Long,
+    val action: BlockAction,
+    val actionStatus: DetectionActionStatus,
 )

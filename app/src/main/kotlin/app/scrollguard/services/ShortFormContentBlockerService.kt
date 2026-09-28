@@ -26,6 +26,7 @@ import android.util.DisplayMetrics
 import android.view.WindowManager
 import android.view.accessibility.AccessibilityEvent
 import app.scrollguard.models.BlockAction
+import app.scrollguard.models.DetectionActionStatus
 import app.scrollguard.services.detectors.InstagramReelsDetector
 import app.scrollguard.services.detectors.ShortFormContentDetector
 import app.scrollguard.services.detectors.TikTokDetector
@@ -130,6 +131,10 @@ class ShortFormContentBlockerService : AccessibilityService() {
                     handleShortFormContentDetected(packageName, result.action)
                 } else {
                     Timber.d("[$packageName] Action skipped due to cooldown")
+                    DetectionDiagnostics.reportActionStatus(
+                        packageName,
+                        DetectionActionStatus.COOLDOWN,
+                    )
                 }
             }
         }
@@ -153,7 +158,7 @@ class ShortFormContentBlockerService : AccessibilityService() {
     private fun handleShortFormContentDetected(packageName: String, action: BlockAction) {
         if (action == BlockAction.SKIP_REEL) {
             Timber.i("[$packageName] Scrolling past in-feed Reel")
-            skipFeedReel()
+            skipFeedReel(packageName)
             return
         }
         val globalAction = when (action) {
@@ -163,6 +168,10 @@ class ShortFormContentBlockerService : AccessibilityService() {
         }
         Timber.i("[$packageName] Handling detection - performing $action action")
         val success = performGlobalAction(globalAction)
+        DetectionDiagnostics.reportActionStatus(
+            packageName,
+            if (success) DetectionActionStatus.PERFORMED else DetectionActionStatus.FAILED,
+        )
         if (success) {
             Timber.d("[$packageName] $action action performed successfully")
         } else {
@@ -171,7 +180,7 @@ class ShortFormContentBlockerService : AccessibilityService() {
     }
 
     /** Swipe upward once so Instagram advances beyond the current Home-feed Reel card. */
-    private fun skipFeedReel() {
+    private fun skipFeedReel(packageName: String) {
         val metrics = DisplayMetrics()
         @Suppress("DEPRECATION")
         (getSystemService(WINDOW_SERVICE) as WindowManager).defaultDisplay.getRealMetrics(metrics)
@@ -183,7 +192,28 @@ class ShortFormContentBlockerService : AccessibilityService() {
         val gesture = GestureDescription.Builder()
             .addStroke(GestureDescription.StrokeDescription(path, 0L, 220L))
             .build()
-        dispatchGesture(gesture, null, null)
+        val dispatched = dispatchGesture(
+            gesture,
+            object : GestureResultCallback() {
+                override fun onCompleted(gestureDescription: GestureDescription?) {
+                    DetectionDiagnostics.reportActionStatus(
+                        packageName,
+                        DetectionActionStatus.PERFORMED,
+                    )
+                }
+
+                override fun onCancelled(gestureDescription: GestureDescription?) {
+                    DetectionDiagnostics.reportActionStatus(
+                        packageName,
+                        DetectionActionStatus.FAILED,
+                    )
+                }
+            },
+            null,
+        )
+        if (!dispatched) {
+            DetectionDiagnostics.reportActionStatus(packageName, DetectionActionStatus.FAILED)
+        }
     }
 
     /**
