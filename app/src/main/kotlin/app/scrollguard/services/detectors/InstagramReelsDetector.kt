@@ -68,8 +68,12 @@ class InstagramReelsDetector : ShortFormContentDetector {
         val homeFeedContext = tree.hasVisibleId("row_feed_profile_header")
         val reelIds = tree.hasVisibleId("clips_", "reels_")
         val verticalPager = tree.hasTallScrollableNode()
-        val homeFeedReel = (selectedHome || homeFeedContext) && !profileScreen && !storyViewer &&
-            ((reelIds && controlCount >= 2) || (verticalPager && controlCount >= 3))
+        val metrics = resources.displayMetrics
+        val reelBounds = tree.homeReelMediaBounds(metrics.widthPixels, metrics.heightPixels)
+        // Preloaded Reel controls can appear in the accessibility tree while a normal post is
+        // showing. Require the Home tab, an actual feed card, and a visible Reel video surface.
+        val homeFeedReel = selectedHome && homeFeedContext && !profileScreen && !storyViewer &&
+            reelBounds != null && reelIds && controlCount >= 2
         val scored = scoreInstagram(
             InstagramSignals(
                 selectedTabId = tree.hasSelectedId("clips_tab", "reels_tab"),
@@ -105,6 +109,7 @@ class InstagramReelsDetector : ShortFormContentDetector {
             } else {
                 app.scrollguard.models.BlockAction.BACK
             },
+            reelBounds = if (homeFeedReel) reelBounds else null,
         )
     }
 }

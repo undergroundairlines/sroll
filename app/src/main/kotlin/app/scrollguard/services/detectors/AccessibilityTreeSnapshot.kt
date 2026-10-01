@@ -20,6 +20,10 @@ internal data class NodeSignal(
     val visible: Boolean,
     val width: Int,
     val height: Int,
+    val left: Int,
+    val top: Int,
+    val right: Int,
+    val bottom: Int,
 )
 
 internal class AccessibilityTreeSnapshot private constructor(
@@ -60,6 +64,21 @@ internal class AccessibilityTreeSnapshot private constructor(
         node.visible && node.scrollable && node.height > node.width
     }
 
+    /** Only a visible video surface near the viewport centre may mask an in-feed Reel. */
+    fun homeReelMediaBounds(screenWidth: Int, screenHeight: Int): Rect? {
+        val reelMedia = listOf("clips_video_container", "clips_media_component", "clips_single_media_component")
+        val candidate = nodes.asSequence()
+            .filter { node ->
+                node.visible && reelMedia.any(node.id::contains) &&
+                    node.width >= screenWidth * 0.55f && node.height >= screenHeight * 0.22f &&
+                    node.top < screenHeight * 0.72f && node.bottom > screenHeight * 0.28f
+            }
+            .maxByOrNull { it.width.toLong() * it.height }
+            ?: return null
+        return Rect(candidate.left.coerceAtLeast(0), candidate.top.coerceAtLeast(0),
+            candidate.right.coerceAtMost(screenWidth), candidate.bottom.coerceAtMost(screenHeight))
+    }
+
     /** Resource IDs are developer-defined UI names and do not contain captions or usernames. */
     fun diagnosticIdentifiers(): List<String> {
         val ids = nodes.asSequence()
@@ -98,6 +117,10 @@ internal class AccessibilityTreeSnapshot private constructor(
                     visible = node.isVisibleToUser,
                     width = bounds.width(),
                     height = bounds.height(),
+                    left = bounds.left,
+                    top = bounds.top,
+                    right = bounds.right,
+                    bottom = bounds.bottom,
                 )
 
                 for (index in 0 until node.childCount) {

@@ -8,6 +8,8 @@
 
 package app.scrollguard.models
 
+import android.graphics.Rect
+
 enum class BlockAction {
     BACK,
     HOME,
@@ -30,6 +32,7 @@ data class DetectionResult(
     val reasons: List<String>,
     val identifiers: List<String> = emptyList(),
     val action: BlockAction = BlockAction.BACK,
+    val reelBounds: Rect? = null,
 ) {
     val shouldBlock: Boolean
         get() = score >= threshold
