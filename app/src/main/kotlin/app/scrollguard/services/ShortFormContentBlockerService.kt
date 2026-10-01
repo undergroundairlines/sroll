@@ -22,6 +22,8 @@ import android.accessibilityservice.GestureDescription
 import android.annotation.SuppressLint
 import android.graphics.Path
 import android.os.SystemClock
+import android.os.Handler
+import android.os.Looper
 import android.util.DisplayMetrics
 import android.view.WindowManager
 import android.view.accessibility.AccessibilityEvent
@@ -57,6 +59,19 @@ class ShortFormContentBlockerService : AccessibilityService() {
     private val actionCooldownMillis = 1500L
     private val userPreferencesProvider by lazy { UserPreferencesProvider(applicationContext) }
     private val blockStatsStore by lazy { BlockStatsStore(applicationContext) }
+    private val homeReelMask by lazy { HomeReelMask(this) }
+    private val mainHandler = Handler(Looper.getMainLooper())
+    private val maskWindowCheck = object : Runnable {
+        override fun run() {
+            if (!homeReelMask.isShowing) return
+            if (rootInActiveWindow?.packageName?.toString() != "com.instagram.android" ||
+                "com.instagram.android" !in enabledPackages) {
+                homeReelMask.hide()
+                return
+            }
+            mainHandler.postDelayed(this, 750L)
+        }
+    }
 
     @Volatile
     private var enabledPackages: Set<String> = emptySet()
@@ -79,6 +94,9 @@ class ShortFormContentBlockerService : AccessibilityService() {
             .onEach { packages ->
                 Timber.d("Tracked packages updated: ${packages.joinToString()}")
                 enabledPackages = packages.toSet()
+                if ("com.instagram.android" !in enabledPackages) {
+                    mainHandler.post { homeReelMask.hide() }
+                }
                 val info = serviceInfo.apply {
                     eventTypes = AccessibilityEvent.TYPE_WINDOW_STATE_CHANGED or
                         AccessibilityEvent.TYPE_WINDOW_CONTENT_CHANGED or
@@ -107,6 +125,7 @@ class ShortFormContentBlockerService : AccessibilityService() {
         if (event == null) return
 
         val packageName = event.packageName?.toString() ?: return
+        if (packageName != "com.instagram.android") homeReelMask.hide()
         if (packageName !in enabledPackages) return
 
         if (
@@ -129,6 +148,17 @@ class ShortFormContentBlockerService : AccessibilityService() {
             val windowRoot = rootInActiveWindow
             val result = detector.detect(event, windowRoot, resources)
             DetectionDiagnostics.report(result)
+            if (packageName == "com.instagram.android") {
+                if (result.shouldBlock && result.action == BlockAction.SKIP_REEL &&
+                    result.reelBounds != null) {
+                    homeReelMask.show(result.reelBounds)
+                    mainHandler.removeCallbacks(maskWindowCheck)
+                    mainHandler.postDelayed(maskWindowCheck, 750L)
+                } else {
+                    homeReelMask.hide()
+                    mainHandler.removeCallbacks(maskWindowCheck)
+                }
+            }
             if (result.shouldBlock) {
                 Timber.i("[$packageName] Short-form content detected!")
                 val key = "${packageName}_content_detected"
@@ -152,6 +182,8 @@ class ShortFormContentBlockerService : AccessibilityService() {
 
     override fun onDestroy() {
         super.onDestroy()
+        mainHandler.removeCallbacks(maskWindowCheck)
+        homeReelMask.hide()
         Timber.d("ShortFormContentBlockerService destroyed")
         job.cancel()
     }
