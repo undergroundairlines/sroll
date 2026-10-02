@@ -51,9 +51,14 @@ class InstagramReelsDetector : ShortFormContentDetector {
         return detectTree(tree, resources.displayMetrics.widthPixels, resources.displayMetrics.heightPixels)
     }
 
-    internal fun detectRoot(rootNode: AccessibilityNodeInfo, resources: Resources): DetectionResult =
-        detectTree(AccessibilityTreeSnapshot.from(rootNode), resources.displayMetrics.widthPixels,
-            resources.displayMetrics.heightPixels)
+    internal fun detectRoot(rootNode: AccessibilityNodeInfo, resources: Resources,
+        extraSource: AccessibilityNodeInfo? = null): DetectionResult {
+        val roots = listOfNotNull(extraSource, rootNode).filter {
+            it.packageName?.toString() == getPackageName() && it.windowId == rootNode.windowId
+        }
+        return detectTree(AccessibilityTreeSnapshot.from(*roots.toTypedArray()),
+            resources.displayMetrics.widthPixels, resources.displayMetrics.heightPixels)
+    }
 
     internal fun detectTree(tree: AccessibilityTreeSnapshot, screenWidth: Int, screenHeight: Int): DetectionResult {
         val controlCount = tree.labelGroupCount(
