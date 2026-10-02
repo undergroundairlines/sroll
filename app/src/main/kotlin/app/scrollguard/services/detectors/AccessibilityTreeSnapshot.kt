@@ -9,6 +9,7 @@ package app.scrollguard.services.detectors
 
 import android.graphics.Rect
 import android.view.accessibility.AccessibilityNodeInfo
+import app.scrollguard.models.MediaBounds
 import java.util.ArrayDeque
 import java.util.Locale
 
@@ -26,7 +27,7 @@ internal data class NodeSignal(
     val bottom: Int,
 )
 
-internal class AccessibilityTreeSnapshot private constructor(
+internal class AccessibilityTreeSnapshot internal constructor(
     private val nodes: List<NodeSignal>,
     val truncated: Boolean,
 ) {
@@ -64,19 +65,32 @@ internal class AccessibilityTreeSnapshot private constructor(
         node.visible && node.scrollable && node.height > node.width
     }
 
-    /** Only a visible video surface near the viewport centre may mask an in-feed Reel. */
-    fun homeReelMediaBounds(screenWidth: Int, screenHeight: Int): Rect? {
+    /** Only an on-screen Reel video surface may be covered; toolbar and navigation are clipped. */
+    fun homeReelMediaBounds(screenWidth: Int, screenHeight: Int): MediaBounds? {
         val reelMedia = listOf("clips_video_container", "clips_media_component", "clips_single_media_component")
+        val navigationTop = nodes.filter { node ->
+            node.visible && node.top > screenHeight / 2 &&
+                node.id.substringAfterLast('/') in setOf("feed_tab", "home_tab", "clips_tab", "reels_tab",
+                    "direct_tab", "search_tab", "profile_tab") && node.height > 0
+        }.minOfOrNull { it.top } ?: screenHeight
+        val toolbarBottom = nodes.filter { node ->
+            node.visible && node.bottom < screenHeight / 3 && node.height > 0 &&
+                node.id.substringAfterLast('/') in setOf("action_bar", "action_bar_container")
+        }.maxOfOrNull { it.bottom } ?: 0
+        val viewport = MediaBounds(0, toolbarBottom, screenWidth, navigationTop)
         val candidate = nodes.asSequence()
-            .filter { node ->
-                node.visible && reelMedia.any(node.id::contains) &&
-                    node.width >= screenWidth * 0.55f && node.height >= screenHeight * 0.22f &&
-                    node.top < screenHeight * 0.72f && node.bottom > screenHeight * 0.28f
+            .filter { it.visible && it.id.substringAfterLast('/') in reelMedia }
+            .mapNotNull { node ->
+                val clipped = MediaBounds(node.left, node.top, node.right, node.bottom).intersect(viewport)
+                clipped?.takeIf { it.width >= screenWidth * 0.55f && it.height >= screenHeight * 0.14f }
+                    ?.let { reelMedia.indexOf(node.id.substringAfterLast('/')) to it }
             }
-            .maxByOrNull { it.width.toLong() * it.height }
+            // Prefer the video surface to a broad Reel container that also includes navigation.
+            .sortedWith(compareBy<Pair<Int, MediaBounds>> { it.first }
+                .thenByDescending { it.second.width.toLong() * it.second.height })
+            .firstOrNull()
             ?: return null
-        return Rect(candidate.left.coerceAtLeast(0), candidate.top.coerceAtLeast(0),
-            candidate.right.coerceAtMost(screenWidth), candidate.bottom.coerceAtMost(screenHeight))
+        return candidate.second
     }
 
     /** Resource IDs are developer-defined UI names and do not contain captions or usernames. */
@@ -93,15 +107,17 @@ internal class AccessibilityTreeSnapshot private constructor(
     }
 
     companion object {
-        private const val MAX_NODES = 350
+        private const val MAX_NODES = 1200
 
         fun from(vararg roots: AccessibilityNodeInfo): AccessibilityTreeSnapshot {
             val queue = ArrayDeque<AccessibilityNodeInfo>()
             val signals = mutableListOf<NodeSignal>()
+            val visited = HashSet<AccessibilityNodeInfo>()
             roots.forEach(queue::addLast)
 
             while (queue.isNotEmpty() && signals.size < MAX_NODES) {
                 val node = queue.removeFirst()
+                if (!visited.add(node)) continue
                 val bounds = Rect()
                 node.getBoundsInScreen(bounds)
                 val label = sequenceOf(node.contentDescription, node.text)
