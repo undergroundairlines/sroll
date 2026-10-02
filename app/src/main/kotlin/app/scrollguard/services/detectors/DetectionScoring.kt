@@ -56,15 +56,14 @@ internal fun scoreInstagram(signals: InstagramSignals): ScoredSignals = buildSco
     addIf(signals.reelIds, 2, "Reel interface identifiers")
     addIf(signals.reelsControls, 3, "Reels control group")
     addIf(signals.verticalPager, 1, "Vertical media pager")
+    // The detector has already established a visible Reel video inside the Home feed.
+    // Count this before weak normal-screen penalties, even when control labels are absent.
+    addIf(signals.homeFeedReel, 8, "Reel card in Home feed")
     subtractIf(signals.storyViewer, 10)
     subtractIf(signals.homeTabSelected && !signals.homeFeedReel, 10)
     subtractIf(signals.profileScreen, 20)
     subtractIf(signals.normalScreenId && score < 7, 5)
     subtractIf(signals.normalScreenLabel && score < 7, 5)
-    // Reels inside Home don't use the dedicated Reels viewer ID/tab. Only act when Home is
-    // selected and the card has either Reel-specific IDs plus media controls, or a tall
-    // swipeable media item with the full Reel interaction group.
-    addIf(signals.homeFeedReel, 8, "Reel card in Home feed")
 }
 
 private class ScoreBuilder {
