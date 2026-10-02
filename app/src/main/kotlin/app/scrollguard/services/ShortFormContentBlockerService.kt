@@ -64,18 +64,22 @@ class ShortFormContentBlockerService : AccessibilityService() {
     private val blockStatsStore by lazy { BlockStatsStore(applicationContext) }
     private val homeReelMask by lazy { HomeReelMask(this) }
     private val mainHandler = Handler(Looper.getMainLooper())
+    private var maskedReelSource: AccessibilityNodeInfo? = null
     private val maskWindowCheck = object : Runnable {
         override fun run() {
             if (!homeReelMask.isShowing) return
             val root = foregroundInstagramRoot()
             if (root == null || "com.instagram.android" !in enabledPackages) {
-                homeReelMask.hide()
+                hideHomeReelMask()
                 return
             }
             // Keep the cover on the video as it moves and clear it when a profile, Story or
             // ordinary post replaces it, even if Instagram omits a content-change event.
             val detector = detectors.getValue("com.instagram.android") as InstagramReelsDetector
-            updateHomeReelMask(detector.detectRoot(root, resources))
+            val source = maskedReelSource?.takeIf {
+                it.windowId == root.windowId && runCatching { it.refresh() }.getOrDefault(false)
+            }
+            updateHomeReelMask(detector.detectRoot(root, resources, source))
         }
     }
 
@@ -101,7 +105,7 @@ class ShortFormContentBlockerService : AccessibilityService() {
                 Timber.d("Tracked packages updated: ${packages.joinToString()}")
                 enabledPackages = packages.toSet()
                 if ("com.instagram.android" !in enabledPackages) {
-                    mainHandler.post { homeReelMask.hide() }
+                    mainHandler.post { hideHomeReelMask() }
                 }
                 val info = serviceInfo.apply {
                     eventTypes = AccessibilityEvent.TYPE_WINDOW_STATE_CHANGED or
@@ -132,14 +136,13 @@ class ShortFormContentBlockerService : AccessibilityService() {
 
         if (event.eventType == AccessibilityEvent.TYPE_WINDOWS_CHANGED) {
             if (foregroundInstagramRoot() == null) {
-                homeReelMask.hide()
-                mainHandler.removeCallbacks(maskWindowCheck)
+                hideHomeReelMask()
             }
             return
         }
 
         val packageName = event.packageName?.toString() ?: return
-        if (packageName != "com.instagram.android") homeReelMask.hide()
+        if (packageName != "com.instagram.android") hideHomeReelMask()
         if (packageName !in enabledPackages) return
 
         if (
@@ -163,13 +166,13 @@ class ShortFormContentBlockerService : AccessibilityService() {
                 foregroundInstagramRoot()
             } else rootInActiveWindow
             if (windowRoot?.packageName?.toString() != packageName) {
-                homeReelMask.hide()
+                hideHomeReelMask()
                 return
             }
             val result = detector.detect(event, windowRoot, resources)
             DetectionDiagnostics.report(result)
             if (packageName == "com.instagram.android") {
-                updateHomeReelMask(result)
+                updateHomeReelMask(result, runCatching { event.source }.getOrNull())
             }
             if (result.shouldBlock) {
                 Timber.i("[$packageName] Short-form content detected!")
@@ -189,15 +192,13 @@ class ShortFormContentBlockerService : AccessibilityService() {
     }
 
     override fun onInterrupt() {
-        mainHandler.removeCallbacks(maskWindowCheck)
-        homeReelMask.hide()
+        hideHomeReelMask()
         Timber.w("ShortFormContentBlockerService interrupted")
     }
 
     override fun onDestroy() {
         super.onDestroy()
-        mainHandler.removeCallbacks(maskWindowCheck)
-        homeReelMask.hide()
+        hideHomeReelMask()
         Timber.d("ShortFormContentBlockerService destroyed")
         job.cancel()
     }
@@ -214,16 +215,31 @@ class ShortFormContentBlockerService : AccessibilityService() {
             .firstOrNull { it.packageName?.toString() == "com.instagram.android" }
     }
 
-    private fun updateHomeReelMask(result: DetectionResult) {
+    @Suppress("DEPRECATION")
+    private fun updateHomeReelMask(result: DetectionResult, source: AccessibilityNodeInfo? = null) {
         mainHandler.removeCallbacks(maskWindowCheck)
         if (result.shouldBlock && result.action == BlockAction.SKIP_REEL && result.reelBounds != null) {
             val shown = homeReelMask.show(result.reelBounds)
+            if (shown && source != null) {
+                maskedReelSource?.recycle()
+                // The event source can expose a Reel video missing from the window-root tree.
+                // Keep a copy and refresh it on every position check instead of using stale bounds.
+                maskedReelSource = runCatching { AccessibilityNodeInfo.obtain(source) }.getOrNull()
+            }
             DetectionDiagnostics.reportVideoCoverStatus(result.packageName,
                 if (shown) VideoCoverStatus.ADDED else VideoCoverStatus.FAILED)
-            if (shown) mainHandler.postDelayed(maskWindowCheck, 250L)
+            if (shown) mainHandler.postDelayed(maskWindowCheck, 250L) else hideHomeReelMask()
         } else {
-            homeReelMask.hide()
+            hideHomeReelMask()
         }
+    }
+
+    @Suppress("DEPRECATION")
+    private fun hideHomeReelMask() {
+        mainHandler.removeCallbacks(maskWindowCheck)
+        homeReelMask.hide()
+        maskedReelSource?.recycle()
+        maskedReelSource = null
     }
 
     /** Performs the detector's requested navigation or Home-feed scroll action. */
