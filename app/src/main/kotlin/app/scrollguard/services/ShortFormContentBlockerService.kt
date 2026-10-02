@@ -28,8 +28,11 @@ import android.util.DisplayMetrics
 import android.view.WindowManager
 import android.view.accessibility.AccessibilityEvent
 import android.view.accessibility.AccessibilityNodeInfo
+import android.view.accessibility.AccessibilityWindowInfo
 import app.scrollguard.models.BlockAction
 import app.scrollguard.models.DetectionActionStatus
+import app.scrollguard.models.DetectionResult
+import app.scrollguard.models.VideoCoverStatus
 import app.scrollguard.services.detectors.InstagramReelsDetector
 import app.scrollguard.services.detectors.ShortFormContentDetector
 import app.scrollguard.services.detectors.TikTokDetector
@@ -64,12 +67,15 @@ class ShortFormContentBlockerService : AccessibilityService() {
     private val maskWindowCheck = object : Runnable {
         override fun run() {
             if (!homeReelMask.isShowing) return
-            if (rootInActiveWindow?.packageName?.toString() != "com.instagram.android" ||
-                "com.instagram.android" !in enabledPackages) {
+            val root = foregroundInstagramRoot()
+            if (root == null || "com.instagram.android" !in enabledPackages) {
                 homeReelMask.hide()
                 return
             }
-            mainHandler.postDelayed(this, 750L)
+            // Keep the cover on the video as it moves and clear it when a profile, Story or
+            // ordinary post replaces it, even if Instagram omits a content-change event.
+            val detector = detectors.getValue("com.instagram.android") as InstagramReelsDetector
+            updateHomeReelMask(detector.detectRoot(root, resources))
         }
     }
 
@@ -100,7 +106,7 @@ class ShortFormContentBlockerService : AccessibilityService() {
                 val info = serviceInfo.apply {
                     eventTypes = AccessibilityEvent.TYPE_WINDOW_STATE_CHANGED or
                         AccessibilityEvent.TYPE_WINDOW_CONTENT_CHANGED or
-                        AccessibilityEvent.TYPE_VIEW_SCROLLED
+                        AccessibilityEvent.TYPE_VIEW_SCROLLED or AccessibilityEvent.TYPE_WINDOWS_CHANGED
                     feedbackType = AccessibilityServiceInfo.FEEDBACK_GENERIC
                     flags = AccessibilityServiceInfo.FLAG_REPORT_VIEW_IDS or
                         AccessibilityServiceInfo.FLAG_RETRIEVE_INTERACTIVE_WINDOWS
@@ -124,6 +130,14 @@ class ShortFormContentBlockerService : AccessibilityService() {
     override fun onAccessibilityEvent(event: AccessibilityEvent?) {
         if (event == null) return
 
+        if (event.eventType == AccessibilityEvent.TYPE_WINDOWS_CHANGED) {
+            if (foregroundInstagramRoot() == null) {
+                homeReelMask.hide()
+                mainHandler.removeCallbacks(maskWindowCheck)
+            }
+            return
+        }
+
         val packageName = event.packageName?.toString() ?: return
         if (packageName != "com.instagram.android") homeReelMask.hide()
         if (packageName !in enabledPackages) return
@@ -145,19 +159,17 @@ class ShortFormContentBlockerService : AccessibilityService() {
                 return
             }
 
-            val windowRoot = rootInActiveWindow
+            val windowRoot = if (packageName == "com.instagram.android") {
+                foregroundInstagramRoot()
+            } else rootInActiveWindow
+            if (windowRoot?.packageName?.toString() != packageName) {
+                homeReelMask.hide()
+                return
+            }
             val result = detector.detect(event, windowRoot, resources)
             DetectionDiagnostics.report(result)
             if (packageName == "com.instagram.android") {
-                if (result.shouldBlock && result.action == BlockAction.SKIP_REEL &&
-                    result.reelBounds != null) {
-                    homeReelMask.show(result.reelBounds)
-                    mainHandler.removeCallbacks(maskWindowCheck)
-                    mainHandler.postDelayed(maskWindowCheck, 750L)
-                } else {
-                    homeReelMask.hide()
-                    mainHandler.removeCallbacks(maskWindowCheck)
-                }
+                updateHomeReelMask(result)
             }
             if (result.shouldBlock) {
                 Timber.i("[$packageName] Short-form content detected!")
@@ -177,6 +189,8 @@ class ShortFormContentBlockerService : AccessibilityService() {
     }
 
     override fun onInterrupt() {
+        mainHandler.removeCallbacks(maskWindowCheck)
+        homeReelMask.hide()
         Timber.w("ShortFormContentBlockerService interrupted")
     }
 
@@ -186,6 +200,30 @@ class ShortFormContentBlockerService : AccessibilityService() {
         homeReelMask.hide()
         Timber.d("ShortFormContentBlockerService destroyed")
         job.cancel()
+    }
+
+    private fun foregroundInstagramRoot(): AccessibilityNodeInfo? {
+        val activeRoot = rootInActiveWindow
+        if (activeRoot?.packageName?.toString() == "com.instagram.android") return activeRoot
+        if (activeRoot != null && activeRoot.packageName?.toString() != applicationContext.packageName) return null
+        // Restrict the fallback to the active/focused application window; never read a
+        // background Instagram window from Android's Recents screen.
+        return windows.asSequence()
+            .filter { it.type == AccessibilityWindowInfo.TYPE_APPLICATION && (it.isActive || it.isFocused) }
+            .mapNotNull { it.root }
+            .firstOrNull { it.packageName?.toString() == "com.instagram.android" }
+    }
+
+    private fun updateHomeReelMask(result: DetectionResult) {
+        mainHandler.removeCallbacks(maskWindowCheck)
+        if (result.shouldBlock && result.action == BlockAction.SKIP_REEL && result.reelBounds != null) {
+            val shown = homeReelMask.show(result.reelBounds)
+            DetectionDiagnostics.reportVideoCoverStatus(result.packageName,
+                if (shown) VideoCoverStatus.ADDED else VideoCoverStatus.FAILED)
+            if (shown) mainHandler.postDelayed(maskWindowCheck, 250L)
+        } else {
+            homeReelMask.hide()
+        }
     }
 
     /** Performs the detector's requested navigation or Home-feed scroll action. */
