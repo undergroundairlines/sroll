@@ -38,8 +38,9 @@ class InstagramReelsDetector : ShortFormContentDetector {
         resources: Resources,
     ): DetectionResult {
         val eventSource = runCatching { event.source }.getOrNull()
-        val instagramRoots = listOfNotNull(rootNode, eventSource).filter { node ->
-            node.packageName?.toString() == getPackageName()
+        val instagramRoots = listOfNotNull(eventSource, rootNode).filter { node ->
+            node.packageName?.toString() == getPackageName() &&
+                (rootNode == null || node.windowId == rootNode.windowId)
         }.distinct()
         if (instagramRoots.isEmpty()) {
             return DetectionResult(getPackageName(), 0, 7, listOf("Waiting for Instagram interface"))
@@ -47,6 +48,19 @@ class InstagramReelsDetector : ShortFormContentDetector {
         // The event source often contains controls for a Home-feed Reel that Instagram omits
         // from the full window tree. Merge both, while rejecting Android's overview window.
         val tree = AccessibilityTreeSnapshot.from(*instagramRoots.toTypedArray())
+        return detectTree(tree, resources.displayMetrics.widthPixels, resources.displayMetrics.heightPixels)
+    }
+
+    internal fun detectRoot(rootNode: AccessibilityNodeInfo, resources: Resources,
+        extraSource: AccessibilityNodeInfo? = null): DetectionResult {
+        val roots = listOfNotNull(extraSource, rootNode).filter {
+            it.packageName?.toString() == getPackageName() && it.windowId == rootNode.windowId
+        }
+        return detectTree(AccessibilityTreeSnapshot.from(*roots.toTypedArray()),
+            resources.displayMetrics.widthPixels, resources.displayMetrics.heightPixels)
+    }
+
+    internal fun detectTree(tree: AccessibilityTreeSnapshot, screenWidth: Int, screenHeight: Int): DetectionResult {
         val controlCount = tree.labelGroupCount(
             setOf("comment", "comments"),
             setOf("send", "share"),
@@ -66,14 +80,15 @@ class InstagramReelsDetector : ShortFormContentDetector {
         // Instagram exposes this author row only when media is rendered as a card in Home.
         // Do not treat its `profile_header` suffix as the user's actual profile screen.
         val homeFeedContext = tree.hasVisibleId("row_feed_profile_header")
+        val directScreen = tree.hasVisibleId("direct_inbox", "direct_thread", "inbox_refreshable_thread_list")
         val reelIds = tree.hasVisibleId("clips_", "reels_")
         val verticalPager = tree.hasTallScrollableNode()
-        val metrics = resources.displayMetrics
-        val reelBounds = tree.homeReelMediaBounds(metrics.widthPixels, metrics.heightPixels)
+        val reelBounds = tree.homeReelMediaBounds(screenWidth, screenHeight)
         // Preloaded Reel controls can appear in the accessibility tree while a normal post is
-        // showing. Require the Home tab, an actual feed card, and a visible Reel video surface.
-        val homeFeedReel = selectedHome && homeFeedContext && !profileScreen && !storyViewer &&
-            reelBounds != null && reelIds && controlCount >= 2
+        // showing. The user's Home capture also reports Reels navigation selected. A feed
+        // author row plus an on-screen Reel video is stronger evidence than that tab flag.
+        val homeFeedReel = (selectedHome || homeFeedContext) && !profileScreen && !storyViewer &&
+            !directScreen && reelBounds != null
         val scored = scoreInstagram(
             InstagramSignals(
                 selectedTabId = tree.hasSelectedId("clips_tab", "reels_tab"),
@@ -98,11 +113,20 @@ class InstagramReelsDetector : ShortFormContentDetector {
         )
 
         Timber.v("[Instagram] score=${scored.score} reasons=${scored.reasons.joinToString()}")
+        // Home can preload an entire Reels viewer. Never navigate Back from a normal feed
+        // card just because those background controls reached the viewer score threshold.
+        val guardedHome = (selectedHome || homeFeedContext) && !homeFeedReel && !profileScreen && !storyViewer
+        val allowedScreen = profileScreen || storyViewer || directScreen
         return DetectionResult(
             packageName = getPackageName(),
-            score = scored.score,
+            score = if (guardedHome || allowedScreen) 0 else scored.score,
             threshold = 7,
-            reasons = scored.reasons,
+            reasons = when {
+                allowedScreen -> listOf("Profile, Story or message screen allowed")
+                guardedHome -> listOf("Home feed: no visible Reel video")
+                tree.truncated -> scored.reasons + "Interface scan reached its limit"
+                else -> scored.reasons
+            },
             identifiers = tree.diagnosticIdentifiers(),
             action = if (homeFeedReel) {
                 app.scrollguard.models.BlockAction.SKIP_REEL

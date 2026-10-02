@@ -77,6 +77,7 @@ import app.scrollguard.models.DetectionDiagnostic
 import app.scrollguard.models.BlockAction
 import app.scrollguard.models.DetectionActionStatus
 import app.scrollguard.models.TrackedPackage
+import app.scrollguard.models.VideoCoverStatus
 import app.scrollguard.services.BlockStats
 import app.scrollguard.ui.components.AppSection
 import app.scrollguard.ui.components.AppSectionSwitcher
@@ -598,6 +599,19 @@ private fun DetectionDiagnosticsSection(
                                 MaterialTheme.colorScheme.onSurfaceVariant
                         },
                     )
+                    if (diagnostic.videoCoverStatus != VideoCoverStatus.NONE) {
+                        Text(
+                            text = if (diagnostic.videoCoverStatus == VideoCoverStatus.ADDED) {
+                                "Home Reel video cover added"
+                            } else {
+                                "Home Reel video cover could not be added"
+                            },
+                            style = MaterialTheme.typography.bodySmall,
+                            color = if (diagnostic.videoCoverStatus == VideoCoverStatus.FAILED) {
+                                MaterialTheme.colorScheme.error
+                            } else MaterialTheme.colorScheme.onSurfaceVariant,
+                        )
+                    }
                     if (diagnostic.identifiers.isNotEmpty()) {
                         TextButton(onClick = { showIdentifiers = !showIdentifiers }) {
                             Text(

@@ -11,6 +11,7 @@ import app.scrollguard.models.BlockAction
 import app.scrollguard.models.DetectionActionStatus
 import app.scrollguard.models.DetectionDiagnostic
 import app.scrollguard.models.DetectionResult
+import app.scrollguard.models.VideoCoverStatus
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.asStateFlow
 import kotlinx.coroutines.flow.update
@@ -43,7 +44,8 @@ object DetectionDiagnostics {
             if (
                 previous == null ||
                 now - previous.timestampMillis > SAMPLE_WINDOW_MILLIS ||
-                record.score >= previous.score
+                record.score >= previous.score ||
+                (result.shouldBlock && result.action != previous.action)
             ) {
                 val priorOutcome = previous?.actionStatus
                 val preserveOutcome = previous != null &&
@@ -51,7 +53,8 @@ object DetectionDiagnostics {
                     previous.action == result.action &&
                     priorOutcome != null && isCompletedOutcome(priorOutcome)
                 current + (result.packageName to if (preserveOutcome) {
-                    record.copy(actionStatus = priorOutcome ?: record.actionStatus)
+                    record.copy(actionStatus = priorOutcome ?: record.actionStatus,
+                        videoCoverStatus = previous?.videoCoverStatus ?: VideoCoverStatus.NONE)
                 } else {
                     record
                 })
@@ -78,6 +81,14 @@ object DetectionDiagnostics {
 
     fun clear() {
         _records.value = emptyMap()
+    }
+
+    fun reportVideoCoverStatus(packageName: String, status: VideoCoverStatus) {
+        _records.update { current ->
+            val previous = current[packageName] ?: return@update current
+            if (previous.action != BlockAction.SKIP_REEL) return@update current
+            current + (packageName to previous.copy(videoCoverStatus = status))
+        }
     }
 
     private fun isCompletedOutcome(status: DetectionActionStatus): Boolean =

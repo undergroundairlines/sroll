@@ -8,7 +8,19 @@
 
 package app.scrollguard.models
 
-import android.graphics.Rect
+/** Screen coordinates; kept independent of Android so detector geometry is testable. */
+data class MediaBounds(val left: Int, val top: Int, val right: Int, val bottom: Int) {
+    val width: Int get() = right - left
+    val height: Int get() = bottom - top
+
+    fun intersect(other: MediaBounds): MediaBounds? {
+        val clipped = MediaBounds(maxOf(left, other.left), maxOf(top, other.top),
+            minOf(right, other.right), minOf(bottom, other.bottom))
+        return clipped.takeIf { it.width > 0 && it.height > 0 }
+    }
+}
+
+enum class VideoCoverStatus { NONE, ADDED, FAILED }
 
 enum class BlockAction {
     BACK,
@@ -32,7 +44,7 @@ data class DetectionResult(
     val reasons: List<String>,
     val identifiers: List<String> = emptyList(),
     val action: BlockAction = BlockAction.BACK,
-    val reelBounds: Rect? = null,
+    val reelBounds: MediaBounds? = null,
 ) {
     val shouldBlock: Boolean
         get() = score >= threshold
@@ -47,4 +59,5 @@ data class DetectionDiagnostic(
     val timestampMillis: Long,
     val action: BlockAction,
     val actionStatus: DetectionActionStatus,
+    val videoCoverStatus: VideoCoverStatus = VideoCoverStatus.NONE,
 )
