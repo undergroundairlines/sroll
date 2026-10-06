@@ -10,6 +10,9 @@ android {
         versionCode = 1
         versionName = "test-fixture"
     }
+    System.getenv("SCROLL_GUARD_SIGNING_STORE")?.let { pinnedStore ->
+        signingConfigs.getByName("debug").storeFile = file(pinnedStore)
+    }
     compileOptions {
         sourceCompatibility = JavaVersion.VERSION_17
         targetCompatibility = JavaVersion.VERSION_17

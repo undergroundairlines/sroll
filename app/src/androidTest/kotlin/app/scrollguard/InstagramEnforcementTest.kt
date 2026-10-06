@@ -71,7 +71,11 @@ class InstagramEnforcementTest {
         // Gradle uninstalls the target after instrumentation. Preserve emulator screenshots
         // outside its app directory before that cleanup, using the test runner's shell access.
         device.executeShellCommand("mkdir -p /sdcard/Download/scrollguard-verification")
-        device.executeShellCommand("cp /sdcard/Android/data/app.scrollguard/files/* /sdcard/Download/scrollguard-verification/")
+        // executeShellCommand does not expand a wildcard; copy explicit files.
+        for (extension in listOf("png", "xml")) {
+            val fileName = "${testName.methodName}.$extension"
+            device.executeShellCommand("cp /sdcard/Android/data/app.scrollguard/files/$fileName /sdcard/Download/scrollguard-verification/$fileName")
+        }
         device.pressHome()
         device.setOrientationNatural()
         device.unfreezeRotation()

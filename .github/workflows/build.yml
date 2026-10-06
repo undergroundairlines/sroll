@@ -31,6 +31,16 @@ jobs:
           path: ~/.android/debug.keystore
           key: scroll-guard-debug-signing-v1
 
+      - name: Pin the signing key before emulator setup
+        run: |
+          mkdir -p "$HOME/.android" "$RUNNER_TEMP/scroll-guard-signing"
+          if [ ! -f "$HOME/.android/debug.keystore" ]; then
+            keytool -genkeypair -keystore "$HOME/.android/debug.keystore" -storepass android -keypass android -alias androiddebugkey -keyalg RSA -keysize 2048 -validity 10000 -dname "CN=Android Debug,O=Android,C=US"
+          fi
+          cp "$HOME/.android/debug.keystore" "$RUNNER_TEMP/scroll-guard-signing/debug.keystore"
+          echo "SCROLL_GUARD_SIGNING_STORE=$RUNNER_TEMP/scroll-guard-signing/debug.keystore" >> "$GITHUB_ENV"
+          keytool -exportcert -keystore "$RUNNER_TEMP/scroll-guard-signing/debug.keystore" -storepass android -alias androiddebugkey | sha256sum
+
       - name: Set up Gradle
         uses: gradle/actions/setup-gradle@v4
         with:
@@ -62,6 +72,14 @@ jobs:
             app/build/outputs/androidTest-results/
           if-no-files-found: warn
           retention-days: 14
+
+      - name: Preserve the same key in the signing cache
+        if: always()
+        run: |
+          if [ -f "$SCROLL_GUARD_SIGNING_STORE" ]; then
+            mkdir -p "$HOME/.android"
+            cp "$SCROLL_GUARD_SIGNING_STORE" "$HOME/.android/debug.keystore"
+          fi
 
       - name: Upload installable APK
         uses: actions/upload-artifact@v4

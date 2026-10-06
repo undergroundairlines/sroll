@@ -64,6 +64,12 @@ extensions.configure<ApplicationExtension> {
         }
     }
 
+    // Emulator setup can replace Android's default debug-key directory. Use the restored
+    // personal key from a separate location for both the APK and instrumentation build.
+    System.getenv("SCROLL_GUARD_SIGNING_STORE")?.let { pinnedStore ->
+        signingConfigs.getByName("debug").storeFile = file(pinnedStore)
+    }
+
     buildTypes {
         debug {
             isMinifyEnabled = false
