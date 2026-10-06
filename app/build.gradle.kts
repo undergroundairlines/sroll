@@ -31,8 +31,8 @@ plugins {
 extensions.configure<ApplicationExtension> {
     // ... Application Version ...
     val majorUpdateVersion = 0
-    val minorUpdateVersion = 3
-    val patchVersion = 10
+    val minorUpdateVersion = 4
+    val patchVersion = 0
 
     val mVersionCode = majorUpdateVersion.times(10_000)
         .plus(minorUpdateVersion.times(100))
@@ -48,6 +48,7 @@ extensions.configure<ApplicationExtension> {
         versionCode = mVersionCode
         versionName = mVersionName
         applicationId = "app.scrollguard"
+        testInstrumentationRunner = "androidx.test.runner.AndroidJUnitRunner"
     }
 
     signingConfigs {
@@ -61,6 +62,12 @@ extensions.configure<ApplicationExtension> {
                 storePassword = keystoreProperties["storePassword"] as String
             }
         }
+    }
+
+    // Emulator setup can replace Android's default debug-key directory. Use the restored
+    // personal key from a separate location for both the APK and instrumentation build.
+    System.getenv("SCROLL_GUARD_SIGNING_STORE")?.let { pinnedStore ->
+        signingConfigs.getByName("debug").storeFile = file(pinnedStore)
     }
 
     buildTypes {
@@ -120,4 +127,7 @@ dependencies {
 
     testImplementation(kotlin("test"))
     testImplementation("junit:junit:4.13.2")
+    androidTestImplementation("androidx.test:runner:1.6.2")
+    androidTestImplementation("androidx.test.ext:junit:1.2.1")
+    androidTestImplementation("androidx.test.uiautomator:uiautomator:2.3.0")
 }

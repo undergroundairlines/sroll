@@ -25,6 +25,7 @@ import androidx.datastore.preferences.core.longPreferencesKey
 import androidx.datastore.preferences.core.stringPreferencesKey
 import androidx.datastore.preferences.preferencesDataStore
 import app.scrollguard.models.TrackedPackage
+import app.scrollguard.models.InstagramProtectionMode
 import kotlinx.coroutines.flow.Flow
 import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.flow.map
@@ -57,6 +58,31 @@ class UserPreferencesProvider(private val context: Context) {
         stringPreferencesKey("app.scrollguard.strict_mode_pending_target")
     private val strictModeUnlockAtKey =
         longPreferencesKey("app.scrollguard.strict_mode_unlock_at")
+    private val instagramModeKey = stringPreferencesKey("app.scrollguard.instagram_mode")
+
+    fun getInstagramProtectionMode(): Flow<InstagramProtectionMode> = context.dataStore.data.map {
+        InstagramProtectionMode.fromStored(it[instagramModeKey])
+    }
+
+    /** Stronger protection is immediate. Weakening an app lock obeys the same strict delay. */
+    suspend fun requestInstagramProtectionMode(mode: InstagramProtectionMode, nowMillis: Long) {
+        context.dataStore.edit { preferences ->
+            val current = InstagramProtectionMode.fromStored(preferences[instagramModeKey])
+            if (current == InstagramProtectionMode.APP_LOCK && mode == InstagramProtectionMode.FEED_LOCK &&
+                preferences[strictModeEnabledKey] == true) {
+                if (preferences[strictModePendingTargetKey] == null) {
+                    preferences[strictModePendingTargetKey] = StrictModePolicy.INSTAGRAM_FEED_TARGET
+                    preferences[strictModeUnlockAtKey] = StrictModePolicy.unlockAt(nowMillis)
+                }
+            } else {
+                preferences[instagramModeKey] = mode.name
+                if (preferences[strictModePendingTargetKey] == StrictModePolicy.INSTAGRAM_FEED_TARGET) {
+                    preferences.remove(strictModePendingTargetKey)
+                    preferences.remove(strictModeUnlockAtKey)
+                }
+            }
+        }
+    }
 
     /**
      * Gets the list of currently tracked (enabled) package names.
@@ -162,6 +188,8 @@ class UserPreferencesProvider(private val context: Context) {
             if (target != null && StrictModePolicy.isExpired(unlockAt, nowMillis)) {
                 if (target == StrictModePolicy.STRICT_MODE_TARGET) {
                     preferences[strictModeEnabledKey] = false
+                } else if (target == StrictModePolicy.INSTAGRAM_FEED_TARGET) {
+                    preferences[instagramModeKey] = InstagramProtectionMode.FEED_LOCK.name
                 } else {
                     val packages = preferences[userPreferencesKey]
                         ?.split(",")

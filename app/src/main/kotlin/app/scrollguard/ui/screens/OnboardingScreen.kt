@@ -219,7 +219,7 @@ private fun WelcomePage(modifier: Modifier = Modifier) {
         Spacer(modifier = Modifier.height(16.dp))
 
         Text(
-            text = "Block YouTube Shorts, Instagram Reels, and TikTok without ads or subscriptions.",
+            text = "Lock Instagram feeds, block YouTube Shorts and TikTok, and see where your time goes.",
             style = MaterialTheme.typography.bodyLarge,
             color = MaterialTheme.colorScheme.onSurfaceVariant,
             textAlign = TextAlign.Center,
@@ -302,7 +302,7 @@ private fun HowItWorksPage(modifier: Modifier = Modifier) {
 
         // Instagram Flow
         FlowDiagram(
-            platformName = "Instagram Reels",
+            platformName = "Instagram feeds",
             platformIcon = Icons.Rounded.PlayArrow,
         )
     }

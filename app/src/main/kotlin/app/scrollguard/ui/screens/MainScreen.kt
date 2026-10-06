@@ -77,6 +77,8 @@ import app.scrollguard.models.DetectionDiagnostic
 import app.scrollguard.models.BlockAction
 import app.scrollguard.models.DetectionActionStatus
 import app.scrollguard.models.TrackedPackage
+import app.scrollguard.models.InstagramProtectionMode
+import app.scrollguard.services.ProtectionRuntimeState
 import app.scrollguard.models.VideoCoverStatus
 import app.scrollguard.services.BlockStats
 import app.scrollguard.ui.components.AppSection
@@ -155,6 +157,9 @@ fun MainScreen(
             trackedPackages = serviceState.trackedPackages,
             diagnostics = serviceState.diagnostics,
             blockStats = serviceState.blockStats,
+            instagramProtectionMode = serviceState.instagramProtectionMode,
+            runtime = serviceState.runtime,
+            onInstagramModeChange = viewModel::setInstagramProtectionMode,
             strictModeEnabled = serviceState.strictModeEnabled,
             strictModePendingTarget = serviceState.strictModePendingTarget,
             strictModeRemainingSeconds = serviceState.strictModeRemainingSeconds,
@@ -189,6 +194,9 @@ fun MainScreenContent(
     trackedPackages: List<TrackedPackage> = emptyList(),
     diagnostics: List<DetectionDiagnostic> = emptyList(),
     blockStats: BlockStats = BlockStats(),
+    instagramProtectionMode: InstagramProtectionMode = InstagramProtectionMode.FEED_LOCK,
+    runtime: ProtectionRuntimeState = ProtectionRuntimeState(connected = true),
+    onInstagramModeChange: (InstagramProtectionMode) -> Unit = {},
     strictModeEnabled: Boolean = false,
     strictModePendingTarget: String? = null,
     strictModeRemainingSeconds: Long = 0L,
@@ -227,6 +235,9 @@ fun MainScreenContent(
                     trackedPackages = trackedPackages,
                     diagnostics = diagnostics,
                     blockStats = blockStats,
+                    instagramProtectionMode = instagramProtectionMode,
+                    runtime = runtime,
+                    onInstagramModeChange = onInstagramModeChange,
                     strictModeEnabled = strictModeEnabled,
                     strictModePendingTarget = strictModePendingTarget,
                     strictModeRemainingSeconds = strictModeRemainingSeconds,
@@ -267,6 +278,9 @@ private fun ServiceActiveContent(
     trackedPackages: List<TrackedPackage> = emptyList(),
     diagnostics: List<DetectionDiagnostic> = emptyList(),
     blockStats: BlockStats = BlockStats(),
+    instagramProtectionMode: InstagramProtectionMode = InstagramProtectionMode.FEED_LOCK,
+    runtime: ProtectionRuntimeState = ProtectionRuntimeState(connected = true),
+    onInstagramModeChange: (InstagramProtectionMode) -> Unit = {},
     strictModeEnabled: Boolean = false,
     strictModePendingTarget: String? = null,
     strictModeRemainingSeconds: Long = 0L,
@@ -312,12 +326,17 @@ private fun ServiceActiveContent(
                         Spacer(modifier = Modifier.size(14.dp))
                         Column {
                             Text(
-                                text = if (enabledCount > 0) "Protection on" else "Ready to protect",
+                                text = when {
+                                    !runtime.connected -> "Blocker needs restarting"
+                                    enabledCount > 0 -> "Blocker running"
+                                    else -> "Ready to protect"
+                                },
                                 style = MaterialTheme.typography.headlineSmall,
                                 fontWeight = FontWeight.Bold,
                             )
                             Text(
-                                text = "$enabledCount of ${trackedPackages.size} apps guarded",
+                                text = if (runtime.connected) "$enabledCount of ${trackedPackages.size} apps enabled"
+                                    else "Turn Scroll Guard accessibility off and on",
                                 style = MaterialTheme.typography.bodyMedium,
                                 color = MaterialTheme.colorScheme.onSurfaceVariant,
                             )
@@ -339,7 +358,7 @@ private fun ServiceActiveContent(
                         )
                     }
                     Text(
-                        text = "Block actions counted from this update",
+                        text = "Locks and navigation actions recorded; not a count of videos watched",
                         style = MaterialTheme.typography.labelSmall,
                         color = MaterialTheme.colorScheme.onSurfaceVariant,
                         modifier = Modifier.padding(top = 12.dp),
@@ -364,6 +383,15 @@ private fun ServiceActiveContent(
                 packages = trackedPackages,
                 onPackageToggle = onPackageToggle,
             )
+
+            if (trackedPackages.any { it.packageName == "com.instagram.android" && it.isEnabled }) {
+                Spacer(modifier = Modifier.height(16.dp))
+                InstagramProtectionSection(
+                    mode = instagramProtectionMode,
+                    onModeChange = onInstagramModeChange,
+                    lastCheck = runtime.lastInstagramCheck,
+                )
+            }
 
             Spacer(modifier = Modifier.height(16.dp))
 
@@ -412,6 +440,50 @@ private fun BlockCount(label: String, count: Int, modifier: Modifier = Modifier)
 }
 
 @Composable
+private fun InstagramProtectionSection(
+    mode: InstagramProtectionMode,
+    onModeChange: (InstagramProtectionMode) -> Unit,
+    lastCheck: String?,
+) {
+    Card(
+        modifier = Modifier.fillMaxWidth(),
+        colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surfaceVariant),
+    ) {
+        Column(modifier = Modifier.padding(20.dp), verticalArrangement = Arrangement.spacedBy(12.dp)) {
+            Text("Instagram protection", style = MaterialTheme.typography.titleLarge, fontWeight = FontWeight.Bold)
+            Text(
+                "Feed lock blocks the entire Home feed, Reels and Explore, including ordinary Home posts. " +
+                    "Use the lock screen to open messages or your profile. Unrecognised screens stay locked.",
+                style = MaterialTheme.typography.bodyMedium,
+                color = MaterialTheme.colorScheme.onSurfaceVariant,
+            )
+            HorizontalDivider(color = MaterialTheme.colorScheme.outlineVariant)
+            Row(verticalAlignment = Alignment.CenterVertically) {
+                Column(modifier = Modifier.weight(1f)) {
+                    Text("Block whole Instagram", style = MaterialTheme.typography.titleMedium, fontWeight = FontWeight.Bold)
+                    Text("Strongest option: leave Instagram whenever it opens.",
+                        style = MaterialTheme.typography.bodySmall,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant)
+                }
+                Spacer(modifier = Modifier.size(12.dp))
+                Switch(
+                    checked = mode == InstagramProtectionMode.APP_LOCK,
+                    onCheckedChange = {
+                        onModeChange(if (it) InstagramProtectionMode.APP_LOCK else InstagramProtectionMode.FEED_LOCK)
+                    },
+                )
+            }
+            if (lastCheck != null) {
+                Text("Last Instagram check: $lastCheck", style = MaterialTheme.typography.bodySmall,
+                    color = MaterialTheme.colorScheme.primary)
+            }
+            Text("Strict Mode also delays changing from the whole-app block to feed lock.",
+                style = MaterialTheme.typography.labelSmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
+        }
+    }
+}
+
+@Composable
 private fun StrictModeSection(
     enabled: Boolean,
     pendingTarget: String?,
@@ -454,11 +526,13 @@ private fun StrictModeSection(
 
             if (pendingTarget != null) {
                 Spacer(modifier = Modifier.height(12.dp))
-                val targetName = if (pendingTarget == StrictModePolicy.STRICT_MODE_TARGET) {
-                    "Strict Mode"
-                } else {
+                val targetName = when (pendingTarget) {
+                    StrictModePolicy.STRICT_MODE_TARGET -> "Strict Mode"
+                    StrictModePolicy.INSTAGRAM_FEED_TARGET -> "Instagram messages and profiles"
+                    else -> {
                     packages.firstOrNull { it.packageName == pendingTarget }?.displayName
                         ?: "Blocker"
+                    }
                 }
                 val minutes = remainingSeconds / 60L
                 val seconds = (remainingSeconds % 60L).toString().padStart(2, '0')
@@ -573,6 +647,7 @@ private fun DetectionDiagnosticsSection(
                         BlockAction.BACK -> "Go Back"
                         BlockAction.HOME -> "Go to Home"
                         BlockAction.SKIP_REEL -> "Swipe past Reel"
+                        BlockAction.LOCK_FEED -> "Lock the feed"
                     }
                     val statusLabel = when (diagnostic.actionStatus) {
                         DetectionActionStatus.BELOW_THRESHOLD -> "No action: below threshold"
@@ -585,6 +660,7 @@ private fun DetectionDiagnosticsSection(
                             "$actionLabel action completed"
                         }
                         DetectionActionStatus.FAILED -> "$actionLabel action failed"
+                        DetectionActionStatus.TOUCH_BLOCKED -> "Touch shield attached; feed swipes blocked"
                     }
                     Text(
                         text = statusLabel,
@@ -595,6 +671,7 @@ private fun DetectionDiagnosticsSection(
                             DetectionActionStatus.FEED_SCROLL_SENT,
                             DetectionActionStatus.PERFORMED ->
                                 MaterialTheme.colorScheme.primary
+                            DetectionActionStatus.TOUCH_BLOCKED -> MaterialTheme.colorScheme.primary
                             DetectionActionStatus.BELOW_THRESHOLD, DetectionActionStatus.COOLDOWN ->
                                 MaterialTheme.colorScheme.onSurfaceVariant
                         },

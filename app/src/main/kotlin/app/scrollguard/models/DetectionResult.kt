@@ -26,6 +26,7 @@ enum class BlockAction {
     BACK,
     HOME,
     SKIP_REEL,
+    LOCK_FEED,
 }
 
 enum class DetectionActionStatus {
@@ -35,6 +36,7 @@ enum class DetectionActionStatus {
     FEED_SCROLL_SENT,
     PERFORMED,
     FAILED,
+    TOUCH_BLOCKED,
 }
 
 data class DetectionResult(

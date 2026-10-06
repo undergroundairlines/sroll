@@ -15,6 +15,32 @@ import org.junit.Assert.assertEquals
 import org.junit.Test
 
 class DetectionDiagnosticsTest {
+    @Test fun safeScreenReplacesOldLockOutcome() {
+        DetectionDiagnostics.clear()
+        DetectionDiagnostics.report(DetectionResult("com.instagram.android", 1, 1,
+            listOf("Home feed locked"), action = BlockAction.LOCK_FEED))
+        DetectionDiagnostics.reportActionStatus("com.instagram.android", BlockAction.LOCK_FEED,
+            DetectionActionStatus.TOUCH_BLOCKED)
+        DetectionDiagnostics.report(DetectionResult("com.instagram.android", 0, 1,
+            listOf("Messages allowed"), action = BlockAction.LOCK_FEED))
+        val record = DetectionDiagnostics.records.value.getValue("com.instagram.android")
+        assertEquals(DetectionActionStatus.BELOW_THRESHOLD, record.actionStatus)
+        assertEquals(listOf("Messages allowed"), record.reasons)
+    }
+
+    @Test fun attachmentFailureCannotKeepAnEarlierSuccess() {
+        DetectionDiagnostics.clear()
+        val result = DetectionResult("com.instagram.android", 1, 1,
+            listOf("Home feed locked"), action = BlockAction.LOCK_FEED)
+        DetectionDiagnostics.report(result)
+        DetectionDiagnostics.reportActionStatus(result.packageName, result.action, DetectionActionStatus.TOUCH_BLOCKED)
+        DetectionDiagnostics.report(result)
+        assertEquals(DetectionActionStatus.READY,
+            DetectionDiagnostics.records.value.getValue(result.packageName).actionStatus)
+        DetectionDiagnostics.reportActionStatus(result.packageName, result.action, DetectionActionStatus.FAILED)
+        assertEquals(DetectionActionStatus.FAILED,
+            DetectionDiagnostics.records.value.getValue(result.packageName).actionStatus)
+    }
     @Test
     fun coverFailureIsNotOverwrittenBySuccessfulScrollRequest() {
         DetectionDiagnostics.clear()

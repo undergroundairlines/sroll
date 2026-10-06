@@ -30,7 +30,7 @@
     <string name="youtube_display_name">YouTube</string>
     <string name="youtube_description">Block YouTube Shorts</string>
     <string name="instagram_display_name">Instagram</string>
-    <string name="instagram_description">Block Instagram Reels</string>
+    <string name="instagram_description">Lock Home feed, Reels and Explore</string>
     <string name="tiktok_display_name">TikTok</string>
     <string name="tiktok_description">Block the entire app</string>
     

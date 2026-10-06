@@ -1,29 +1,16 @@
-/*
- * Copyright 2025 Atick Faisal
- *
- * Licensed under the Apache License, Version 2.0 (the "License");
- * you may not use this file except in compliance with the License.
- * You may obtain a copy of the License at
- *
- *     https://www.apache.org/licenses/LICENSE-2.0
- *
- * Unless required by applicable law or agreed to in writing, software
- * distributed under the License is distributed on an "AS IS" BASIS,
- * WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
- * See the License for the specific language governing permissions and
- * limitations under the License.
- */
-
+/* Copyright 2025 Atick Faisal. Modifications copyright 2026 Scroll Guard contributors.
+ * Licensed under the Apache License, Version 2.0. */
 package app.scrollguard.services
 
 import android.accessibilityservice.AccessibilityService
 import android.accessibilityservice.AccessibilityServiceInfo
-import android.accessibilityservice.GestureDescription
 import android.annotation.SuppressLint
-import android.graphics.Path
-import android.os.SystemClock
+import android.app.KeyguardManager
+import android.graphics.Rect
 import android.os.Handler
 import android.os.Looper
+import android.os.SystemClock
+import android.os.Build
 import android.util.DisplayMetrics
 import android.view.WindowManager
 import android.view.accessibility.AccessibilityEvent
@@ -32,366 +19,300 @@ import android.view.accessibility.AccessibilityWindowInfo
 import app.scrollguard.models.BlockAction
 import app.scrollguard.models.DetectionActionStatus
 import app.scrollguard.models.DetectionResult
-import app.scrollguard.models.VideoCoverStatus
-import app.scrollguard.services.detectors.InstagramReelsDetector
-import app.scrollguard.services.detectors.ShortFormContentDetector
-import app.scrollguard.services.detectors.TikTokDetector
+import app.scrollguard.models.InstagramProtectionMode
+import app.scrollguard.models.MediaBounds
+import app.scrollguard.services.detectors.AccessibilityTreeSnapshot
+import app.scrollguard.services.detectors.InstagramFeedPolicy
 import app.scrollguard.services.detectors.YouTubeShortsDetector
+import app.scrollguard.utils.PackageConstants
 import app.scrollguard.utils.UserPreferencesProvider
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.SupervisorJob
+import kotlinx.coroutines.cancel
 import kotlinx.coroutines.flow.catch
+import kotlinx.coroutines.flow.combine
 import kotlinx.coroutines.flow.launchIn
 import kotlinx.coroutines.flow.onEach
 import timber.log.Timber
-import java.util.concurrent.ConcurrentHashMap
 import java.util.ArrayDeque
 import java.util.Locale
 
-/**
- * Accessibility service that detects and blocks short-form content across supported apps.
- *
- * This service monitors only the applications selected by the user. It performs Back for detected
- * Shorts/Reels and Home when the user opens TikTok.
- */
+/** Package-level enforcement for Instagram; only positively identified safe screens are usable. */
 @SuppressLint("AccessibilityPolicy")
 class ShortFormContentBlockerService : AccessibilityService() {
+    private val preferences by lazy { UserPreferencesProvider(applicationContext) }
+    private val blockStats by lazy { BlockStatsStore(applicationContext) }
+    private val handler = Handler(Looper.getMainLooper())
+    private val scope = CoroutineScope(Dispatchers.Main.immediate + SupervisorJob())
+    private val youtube = YouTubeShortsDetector()
+    private val shield by lazy { InstagramLockOverlay(this, ::navigateInstagram, ::leaveInstagram) }
+    private var enabledPackages = PackageConstants.DEFAULT_ENABLED_PACKAGES.toSet()
+    private var instagramMode = InstagramProtectionMode.FEED_LOCK
+    private var lastHomeActionAt = -1_000L
+    private var lastYouTubeActionAt = -1_000L
+    private var instagramEntryHintAt = -10_000L
+    private var lastInstagramWindowId = -1
+    private var recordedLockEpisode = false
+    private var monitoredInstagram = false
 
-    private val lastActionTimestamps = ConcurrentHashMap<String, Long>()
-    private val actionCooldownMillis = 1500L
-    private val userPreferencesProvider by lazy { UserPreferencesProvider(applicationContext) }
-    private val blockStatsStore by lazy { BlockStatsStore(applicationContext) }
-    private val homeReelMask by lazy { HomeReelMask(this) }
-    private val mainHandler = Handler(Looper.getMainLooper())
-    private var maskedReelSource: AccessibilityNodeInfo? = null
-    private val maskWindowCheck = object : Runnable {
+    private val checkInstagram = object : Runnable {
         override fun run() {
-            if (!homeReelMask.isShowing) return
-            val root = foregroundInstagramRoot()
-            if (root == null || "com.instagram.android" !in enabledPackages) {
-                hideHomeReelMask()
-                return
-            }
-            // Keep the cover on the video as it moves and clear it when a profile, Story or
-            // ordinary post replaces it, even if Instagram omits a content-change event.
-            val detector = detectors.getValue("com.instagram.android") as InstagramReelsDetector
-            val source = maskedReelSource?.takeIf {
-                it.windowId == root.windowId && runCatching { it.refresh() }.getOrDefault(false)
-            }
-            updateHomeReelMask(detector.detectRoot(root, resources, source))
+            handler.removeCallbacks(this)
+            enforceInstagram()
+            // Poll even on allowed screens: silent Home transitions must not open a bypass.
+            if (monitoredInstagram) handler.postDelayed(this, 400L)
         }
-    }
-
-    @Volatile
-    private var enabledPackages: Set<String> = emptySet()
-
-    private val job = SupervisorJob()
-    private val coroutineScope = CoroutineScope(Dispatchers.IO + job)
-
-    private val detectors: Map<String, ShortFormContentDetector> by lazy {
-        mapOf(
-            "com.google.android.youtube" to YouTubeShortsDetector(),
-            "com.instagram.android" to InstagramReelsDetector(),
-            "com.zhiliaoapp.musically" to TikTokDetector(),
-        )
     }
 
     override fun onServiceConnected() {
-        Timber.d("ShortFormContentBlockerService connected")
-
-        userPreferencesProvider.getTrackedPackages()
-            .onEach { packages ->
-                Timber.d("Tracked packages updated: ${packages.joinToString()}")
-                enabledPackages = packages.toSet()
-                if ("com.instagram.android" !in enabledPackages) {
-                    mainHandler.post { hideHomeReelMask() }
-                }
-                val info = serviceInfo.apply {
-                    eventTypes = AccessibilityEvent.TYPE_WINDOW_STATE_CHANGED or
-                        AccessibilityEvent.TYPE_WINDOW_CONTENT_CHANGED or
-                        AccessibilityEvent.TYPE_VIEW_SCROLLED or AccessibilityEvent.TYPE_WINDOWS_CHANGED
-                    feedbackType = AccessibilityServiceInfo.FEEDBACK_GENERIC
-                    flags = AccessibilityServiceInfo.FLAG_REPORT_VIEW_IDS or
-                        AccessibilityServiceInfo.FLAG_RETRIEVE_INTERACTIVE_WINDOWS
-                    // An empty array has differed across Android versions. Listening only to our
-                    // own package guarantees that disabling every toggle means monitoring nothing.
-                    packageNames = if (packages.isEmpty()) {
-                        arrayOf(applicationContext.packageName)
-                    } else {
-                        packages.toTypedArray()
-                    }
-                    notificationTimeout = 100
-                }
-                serviceInfo = info
-            }
-            .catch { error ->
-                Timber.e(error, "Error fetching tracked packages")
-            }
-            .launchIn(coroutineScope)
+        serviceInfo = serviceInfo.apply {
+            eventTypes = AccessibilityEvent.TYPE_WINDOW_STATE_CHANGED or
+                AccessibilityEvent.TYPE_WINDOW_CONTENT_CHANGED or
+                AccessibilityEvent.TYPE_VIEW_SCROLLED or AccessibilityEvent.TYPE_WINDOWS_CHANGED or
+                AccessibilityEvent.TYPE_VIEW_CLICKED
+            flags = AccessibilityServiceInfo.FLAG_REPORT_VIEW_IDS or
+                AccessibilityServiceInfo.FLAG_RETRIEVE_INTERACTIVE_WINDOWS
+            feedbackType = AccessibilityServiceInfo.FEEDBACK_GENERIC
+            // Other-app window changes remove the shield on Home/Recents. Their content is
+            // never traversed. Filtering only selected apps misses those transitions.
+            packageNames = null
+            notificationTimeout = 50L
+        }
+        ProtectionRuntime.connected(true)
+        combine(preferences.getTrackedPackages(), preferences.getInstagramProtectionMode()) { packages, mode ->
+            packages to mode
+        }.onEach { (packages, mode) ->
+            enabledPackages = packages.toSet()
+            instagramMode = mode
+            ProtectionRuntime.configured(mode, PackageConstants.INSTAGRAM_PACKAGE in enabledPackages)
+            checkInstagram.run()
+        }.catch { Timber.e(it, "Could not read blocker preferences") }.launchIn(scope)
     }
 
     override fun onAccessibilityEvent(event: AccessibilityEvent?) {
-        if (event == null) return
-
-        if (event.eventType == AccessibilityEvent.TYPE_WINDOWS_CHANGED) {
-            if (foregroundInstagramRoot() == null) {
-                hideHomeReelMask()
+        event ?: return
+        ProtectionRuntime.connected(true)
+        val packageName = event.packageName?.toString()
+        val windowChange = event.eventType == AccessibilityEvent.TYPE_WINDOW_STATE_CHANGED ||
+            event.eventType == AccessibilityEvent.TYPE_WINDOWS_CHANGED
+        if (packageName == PackageConstants.INSTAGRAM_PACKAGE &&
+            event.eventType == AccessibilityEvent.TYPE_WINDOW_STATE_CHANGED) {
+            instagramEntryHintAt = SystemClock.uptimeMillis()
+            lastInstagramWindowId = event.windowId
+        }
+        if (windowChange || packageName == PackageConstants.INSTAGRAM_PACKAGE) {
+            checkInstagram.run()
+        }
+        if (packageName !in enabledPackages) return
+        if (packageName == PackageConstants.TIKTOK_PACKAGE) {
+            val foreground = foregroundApplication()
+            if (foreground?.root?.packageName?.toString() == packageName ||
+                (foreground == null && windowChange)) {
+                exitBlockedApp(packageName, "TikTok blocked completely")
             }
+        } else if (packageName == PackageConstants.YOUTUBE_PACKAGE) {
+            val root = foregroundApplication()?.root ?: return
+            if (root.packageName?.toString() != packageName) return
+            val result = youtube.detect(event, root, resources)
+            DetectionDiagnostics.report(result)
+            if (result.shouldBlock && SystemClock.uptimeMillis() - lastYouTubeActionAt >= 800L) {
+                lastYouTubeActionAt = SystemClock.uptimeMillis()
+                val success = performGlobalAction(GLOBAL_ACTION_BACK)
+                DetectionDiagnostics.reportActionStatus(packageName, BlockAction.BACK,
+                    if (success) DetectionActionStatus.PERFORMED else DetectionActionStatus.FAILED)
+                if (success) blockStats.record()
+            }
+        }
+    }
+
+    private data class ForegroundApplication(val root: AccessibilityNodeInfo, val bounds: MediaBounds)
+
+    private fun foregroundApplication(): ForegroundApplication? {
+        val activeRoot = rootInActiveWindow
+        val activePackage = activeRoot?.packageName?.toString()
+        // Notification shade, system dialogs and other apps must stay usable.
+        if (activeRoot != null && activePackage != null && activePackage != applicationContext.packageName &&
+            activePackage != PackageConstants.INSTAGRAM_PACKAGE) {
+            return ForegroundApplication(activeRoot, boundsOf(activeRoot))
+        }
+        val applicationWindow = windows.asSequence()
+            .filter { it.type == AccessibilityWindowInfo.TYPE_APPLICATION && (it.isFocused || it.isActive) }
+            .sortedByDescending { it.isFocused }
+            .mapNotNull { window -> window.root?.let { window to it } }
+            .firstOrNull()
+        if (applicationWindow != null) {
+            val rect = Rect()
+            applicationWindow.first.getBoundsInScreen(rect)
+            val bounds = MediaBounds(rect.left, rect.top, rect.right, rect.bottom)
+                .takeIf { it.width > 0 && it.height > 0 } ?: boundsOf(applicationWindow.second)
+            return ForegroundApplication(applicationWindow.second, bounds)
+        }
+        return activeRoot?.takeIf { it.packageName?.toString() != applicationContext.packageName }
+            ?.let { ForegroundApplication(it, boundsOf(it)) }
+    }
+
+    private fun boundsOf(root: AccessibilityNodeInfo): MediaBounds {
+        val rect = Rect()
+        root.getBoundsInScreen(rect)
+        return MediaBounds(rect.left, rect.top, rect.right, rect.bottom)
+            .takeIf { it.width > 0 && it.height > 0 }
+            ?: displayBounds()
+    }
+
+    @Suppress("DEPRECATION")
+    private fun displayBounds(): MediaBounds {
+        val manager = getSystemService(WINDOW_SERVICE) as WindowManager
+        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.R) {
+            return manager.currentWindowMetrics.bounds.let { MediaBounds(it.left, it.top, it.right, it.bottom) }
+        }
+        val metrics = DisplayMetrics()
+        manager.defaultDisplay.getRealMetrics(metrics)
+        return MediaBounds(0, 0, metrics.widthPixels, metrics.heightPixels)
+    }
+
+    private fun enforceInstagram() {
+        if (PackageConstants.INSTAGRAM_PACKAGE !in enabledPackages ||
+            (getSystemService(KEYGUARD_SERVICE) as KeyguardManager).isKeyguardLocked) {
+            clearInstagram()
             return
         }
-
-        val packageName = event.packageName?.toString() ?: return
-        if (packageName != "com.instagram.android") hideHomeReelMask()
-        if (packageName !in enabledPackages) return
-
-        if (
-            event.eventType == AccessibilityEvent.TYPE_WINDOW_STATE_CHANGED ||
-            event.eventType == AccessibilityEvent.TYPE_VIEW_SCROLLED ||
-            event.eventType == AccessibilityEvent.TYPE_WINDOW_CONTENT_CHANGED
-        ) {
-            Timber.v(
-                "Accessibility event: type=${event.eventType}, " +
-                    "className=${event.className}, package=$packageName",
-            )
-
-            // Get the appropriate detector for this package
-            val detector = detectors[packageName]
-            if (detector == null) {
-                Timber.v("No detector found for package: $packageName")
-                return
+        val foreground = foregroundApplication()
+        if (foreground != null && foreground.root.packageName?.toString() != PackageConstants.INSTAGRAM_PACKAGE) {
+            instagramEntryHintAt = -10_000L
+            clearInstagram()
+            return
+        }
+        if (foreground == null) {
+            // A cold launch can briefly have no tree. Lock it immediately while the interface
+            // loads, so startup latency cannot expose Home or kick the user out of messages.
+            if (monitoredInstagram || SystemClock.uptimeMillis() - instagramEntryHintAt < 5_000L || shield.isShowing) {
+                monitoredInstagram = true
+                ProtectionRuntime.instagramCheck("Loading interface — feed locked")
+                val attached = shield.show(InstagramLockPanel(displayBounds(),
+                    instagramMode == InstagramProtectionMode.APP_LOCK, false, false))
+                if (!attached || instagramMode == InstagramProtectionMode.APP_LOCK ||
+                    SystemClock.uptimeMillis() - instagramEntryHintAt >= 5_000L) {
+                    exitBlockedApp(PackageConstants.INSTAGRAM_PACKAGE, "Interface unavailable; Instagram blocked")
+                }
+            } else clearInstagram()
+            return
+        }
+        monitoredInstagram = true
+        lastInstagramWindowId = foreground.root.windowId
+        val tree = runCatching { AccessibilityTreeSnapshot.from(foreground.root) }.getOrNull()
+        val screen = InstagramFeedPolicy.evaluate(instagramMode, tree, foreground.bounds)
+        ProtectionRuntime.instagramCheck(screen.description)
+        val result = DetectionResult(PackageConstants.INSTAGRAM_PACKAGE,
+            if (screen.allowed) 0 else 1, 1, listOf(screen.description),
+            tree?.diagnosticIdentifiers().orEmpty(), BlockAction.LOCK_FEED)
+        DetectionDiagnostics.report(result)
+        if (screen.allowed) {
+            shield.hide()
+            recordedLockEpisode = false
+            return
+        }
+        val shown = shield.show(InstagramLockPanel(foreground.bounds,
+            instagramMode == InstagramProtectionMode.APP_LOCK,
+            findNavigation(foreground.root, InstagramDestination.MESSAGES) != null,
+            findNavigation(foreground.root, InstagramDestination.PROFILE) != null))
+        if (shown) {
+            DetectionDiagnostics.reportActionStatus(result.packageName, BlockAction.LOCK_FEED,
+                DetectionActionStatus.TOUCH_BLOCKED)
+            if (!recordedLockEpisode) {
+                blockStats.record()
+                recordedLockEpisode = true
             }
+        } else {
+            ProtectionRuntime.instagramCheck("Shield unavailable — closing Instagram")
+            DetectionDiagnostics.reportActionStatus(result.packageName, BlockAction.LOCK_FEED,
+                DetectionActionStatus.FAILED)
+        }
+        if (!shown || instagramMode == InstagramProtectionMode.APP_LOCK) {
+            exitBlockedApp(result.packageName, screen.description)
+        }
+    }
 
-            val windowRoot = if (packageName == "com.instagram.android") {
-                foregroundInstagramRoot()
-            } else rootInActiveWindow
-            if (windowRoot?.packageName?.toString() != packageName) {
-                hideHomeReelMask()
-                return
-            }
-            val result = detector.detect(event, windowRoot, resources)
-            DetectionDiagnostics.report(result)
-            if (packageName == "com.instagram.android") {
-                updateHomeReelMask(result, runCatching { event.source }.getOrNull())
-            }
-            if (result.shouldBlock) {
-                Timber.i("[$packageName] Short-form content detected!")
-                val key = "${packageName}_content_detected"
-                if (shouldPerformAction(key)) {
-                    handleShortFormContentDetected(packageName, result.action, windowRoot, event)
-                } else {
-                    Timber.d("[$packageName] Action skipped due to cooldown")
-                    DetectionDiagnostics.reportActionStatus(
-                        packageName,
-                        result.action,
-                        DetectionActionStatus.COOLDOWN,
-                    )
+    private fun clearInstagram() {
+        monitoredInstagram = false
+        recordedLockEpisode = false
+        shield.hide()
+        handler.removeCallbacks(checkInstagram)
+    }
+
+    private fun exitBlockedApp(packageName: String, reason: String) {
+        val now = SystemClock.uptimeMillis()
+        if (now - lastHomeActionAt < 500L) return
+        lastHomeActionAt = now
+        Timber.d("Leaving blocked app %s: %s", packageName, reason)
+        val result = DetectionResult(packageName, 1, 1, listOf(reason), action = BlockAction.HOME)
+        DetectionDiagnostics.report(result)
+        val success = performGlobalAction(GLOBAL_ACTION_HOME)
+        DetectionDiagnostics.reportActionStatus(packageName, BlockAction.HOME,
+            if (success) DetectionActionStatus.PERFORMED else DetectionActionStatus.FAILED)
+        if (success && !recordedLockEpisode) {
+            blockStats.record()
+            if (packageName == PackageConstants.INSTAGRAM_PACKAGE) recordedLockEpisode = true
+        }
+    }
+
+    private fun leaveInstagram() {
+        exitBlockedApp(PackageConstants.INSTAGRAM_PACKAGE, "Left the locked feed")
+        handler.postDelayed(checkInstagram, 100L)
+    }
+
+    private fun navigateInstagram(destination: InstagramDestination) {
+        val root = foregroundApplication()?.root
+        if (instagramMode != InstagramProtectionMode.FEED_LOCK || root == null ||
+            root.packageName?.toString() != PackageConstants.INSTAGRAM_PACKAGE ||
+            root.windowId != lastInstagramWindowId) return
+        val target = findNavigation(root, destination)
+        val clicked = target?.let {
+            runCatching { it.performAction(AccessibilityNodeInfo.ACTION_CLICK) }.getOrDefault(false)
+        } ?: false
+        Timber.d("Instagram navigation %s accepted: %s", destination, clicked)
+        if (!clicked) shield.navigationFailed()
+        // Never uncover the feed just because a navigation command was accepted.
+        handler.postDelayed(checkInstagram, 100L)
+    }
+
+    private fun findNavigation(root: AccessibilityNodeInfo, destination: InstagramDestination): AccessibilityNodeInfo? {
+        val ids = when (destination) {
+            InstagramDestination.MESSAGES -> setOf("direct_tab", "action_bar_inbox_button",
+                "action_bar_direct_button", "inbox_button", "messenger_button")
+            InstagramDestination.PROFILE -> setOf("profile_tab", "profile_tab_icon_view")
+        }
+        val labels = if (destination == InstagramDestination.MESSAGES) {
+            setOf("messages", "direct", "messenger")
+        } else setOf("profile", "your profile")
+        val queue = ArrayDeque<AccessibilityNodeInfo>().apply { add(root) }
+        var visited = 0
+        while (queue.isNotEmpty() && visited++ < 1200) {
+            val node = queue.removeFirst()
+            val id = node.viewIdResourceName.orEmpty().substringAfterLast('/')
+            val label = node.contentDescription?.toString()?.lowercase(Locale.ROOT).orEmpty()
+            if (node.isVisibleToUser && (id in ids || label in labels)) {
+                var candidate: AccessibilityNodeInfo? = node
+                repeat(4) {
+                    val current = candidate
+                    if (current?.isClickable == true) return current
+                    candidate = current?.parent
                 }
             }
+            for (index in 0 until node.childCount) node.getChild(index)?.let(queue::addLast)
         }
+        return null
     }
 
     override fun onInterrupt() {
-        hideHomeReelMask()
-        Timber.w("ShortFormContentBlockerService interrupted")
+        ProtectionRuntime.connected(false)
+        clearInstagram()
     }
 
     override fun onDestroy() {
+        ProtectionRuntime.connected(false)
+        clearInstagram()
+        scope.cancel()
         super.onDestroy()
-        hideHomeReelMask()
-        Timber.d("ShortFormContentBlockerService destroyed")
-        job.cancel()
-    }
-
-    private fun foregroundInstagramRoot(): AccessibilityNodeInfo? {
-        val activeRoot = rootInActiveWindow
-        if (activeRoot?.packageName?.toString() == "com.instagram.android") return activeRoot
-        if (activeRoot != null && activeRoot.packageName?.toString() != applicationContext.packageName) return null
-        // Restrict the fallback to the active/focused application window; never read a
-        // background Instagram window from Android's Recents screen.
-        return windows.asSequence()
-            .filter { it.type == AccessibilityWindowInfo.TYPE_APPLICATION && (it.isActive || it.isFocused) }
-            .mapNotNull { it.root }
-            .firstOrNull { it.packageName?.toString() == "com.instagram.android" }
-    }
-
-    @Suppress("DEPRECATION")
-    private fun updateHomeReelMask(result: DetectionResult, source: AccessibilityNodeInfo? = null) {
-        mainHandler.removeCallbacks(maskWindowCheck)
-        if (result.shouldBlock && result.action == BlockAction.SKIP_REEL && result.reelBounds != null) {
-            val shown = homeReelMask.show(result.reelBounds)
-            if (shown && source != null) {
-                maskedReelSource?.recycle()
-                // The event source can expose a Reel video missing from the window-root tree.
-                // Keep a copy and refresh it on every position check instead of using stale bounds.
-                maskedReelSource = runCatching { AccessibilityNodeInfo.obtain(source) }.getOrNull()
-            }
-            DetectionDiagnostics.reportVideoCoverStatus(result.packageName,
-                if (shown) VideoCoverStatus.ADDED else VideoCoverStatus.FAILED)
-            if (shown) mainHandler.postDelayed(maskWindowCheck, 250L) else hideHomeReelMask()
-        } else {
-            hideHomeReelMask()
-        }
-    }
-
-    @Suppress("DEPRECATION")
-    private fun hideHomeReelMask() {
-        mainHandler.removeCallbacks(maskWindowCheck)
-        homeReelMask.hide()
-        maskedReelSource?.recycle()
-        maskedReelSource = null
-    }
-
-    /** Performs the detector's requested navigation or Home-feed scroll action. */
-    private fun handleShortFormContentDetected(
-        packageName: String,
-        action: BlockAction,
-        windowRoot: AccessibilityNodeInfo?,
-        event: AccessibilityEvent,
-    ) {
-        if (action == BlockAction.SKIP_REEL) {
-            Timber.i("[$packageName] Scrolling past in-feed Reel")
-            skipFeedReel(packageName, windowRoot, event)
-            return
-        }
-        val globalAction = when (action) {
-            BlockAction.BACK -> GLOBAL_ACTION_BACK
-            BlockAction.HOME -> GLOBAL_ACTION_HOME
-            BlockAction.SKIP_REEL -> return
-        }
-        Timber.i("[$packageName] Handling detection - performing $action action")
-        val success = performGlobalAction(globalAction)
-        DetectionDiagnostics.reportActionStatus(
-            packageName,
-            action,
-            if (success) DetectionActionStatus.PERFORMED else DetectionActionStatus.FAILED,
-        )
-        if (success) {
-            blockStatsStore.record()
-            Timber.d("[$packageName] $action action performed successfully")
-        } else {
-            Timber.w("[$packageName] $action action failed")
-        }
-    }
-
-    /** Scroll the actual Home feed when Instagram exposes it, then fall back to a swipe. */
-    private fun skipFeedReel(
-        packageName: String,
-        windowRoot: AccessibilityNodeInfo?,
-        event: AccessibilityEvent,
-    ) {
-        val source = runCatching { event.source }.getOrNull()
-        if (scrollHomeFeed(windowRoot, source)) {
-            blockStatsStore.record()
-            DetectionDiagnostics.reportActionStatus(
-                packageName,
-                BlockAction.SKIP_REEL,
-                DetectionActionStatus.FEED_SCROLL_SENT,
-            )
-            return
-        }
-
-        val metrics = DisplayMetrics()
-        @Suppress("DEPRECATION")
-        (getSystemService(WINDOW_SERVICE) as WindowManager).defaultDisplay.getRealMetrics(metrics)
-        val x = metrics.widthPixels / 2f
-        val path = Path().apply {
-            moveTo(x, metrics.heightPixels * 0.78f)
-            lineTo(x, metrics.heightPixels * 0.30f)
-        }
-        val gesture = GestureDescription.Builder()
-            .addStroke(GestureDescription.StrokeDescription(path, 0L, 220L))
-            .build()
-        val dispatched = dispatchGesture(
-            gesture,
-            object : GestureResultCallback() {
-                override fun onCompleted(gestureDescription: GestureDescription?) {
-                    blockStatsStore.record()
-                    DetectionDiagnostics.reportActionStatus(
-                        packageName,
-                        BlockAction.SKIP_REEL,
-                        DetectionActionStatus.PERFORMED,
-                    )
-                }
-
-                override fun onCancelled(gestureDescription: GestureDescription?) {
-                    DetectionDiagnostics.reportActionStatus(
-                        packageName,
-                        BlockAction.SKIP_REEL,
-                        DetectionActionStatus.FAILED,
-                    )
-                }
-            },
-            null,
-        )
-        if (!dispatched) {
-            DetectionDiagnostics.reportActionStatus(
-                packageName,
-                BlockAction.SKIP_REEL,
-                DetectionActionStatus.FAILED,
-            )
-        }
-    }
-
-    private fun scrollHomeFeed(vararg roots: AccessibilityNodeInfo?): Boolean {
-        val queue = ArrayDeque<AccessibilityNodeInfo>()
-        roots.filterNotNull()
-            .filter { it.packageName?.toString() == "com.instagram.android" }
-            .forEach(queue::addLast)
-        var visited = 0
-        while (queue.isNotEmpty() && visited++ < 350) {
-            val node = queue.removeFirst()
-            if (node.isVisibleToUser &&
-                node.viewIdResourceName.orEmpty().contains("row_feed_profile_header")
-            ) {
-                var parent = node.parent
-                while (parent != null) {
-                    val id = parent.viewIdResourceName.orEmpty().lowercase(Locale.ROOT)
-                    val className = parent.className?.toString().orEmpty().lowercase(Locale.ROOT)
-                    val feedList = id.contains("feed") || id.endsWith("/list") ||
-                        className.contains("recyclerview") || className.contains("listview")
-                    val mediaPager = id.contains("clip") || id.contains("reel") ||
-                        id.contains("story") || id.contains("pager")
-                    if (parent.isScrollable && feedList && !mediaPager) {
-                        val bounds = android.graphics.Rect()
-                        parent.getBoundsInScreen(bounds)
-                        if (bounds.height() > bounds.width() &&
-                            runCatching {
-                                parent.performAction(AccessibilityNodeInfo.ACTION_SCROLL_FORWARD)
-                            }.getOrDefault(false)
-                        ) {
-                            return true
-                        }
-                    }
-                    parent = parent.parent
-                }
-            }
-            for (index in 0 until node.childCount) {
-                node.getChild(index)?.let(queue::addLast)
-            }
-        }
-        return false
-    }
-
-    /**
-     * Checks if an action should be performed based on cooldown period.
-     *
-     * Prevents repeated actions from being performed too frequently by enforcing
-     * a cooldown period of 1.5 seconds between actions.
-     *
-     * @param key Unique identifier for the action
-     * @return true if the action should be performed, false if still in cooldown
-     */
-    private fun shouldPerformAction(key: String): Boolean {
-        val now = SystemClock.uptimeMillis()
-        val last = lastActionTimestamps[key] ?: 0L
-        val timeSinceLastAction = now - last
-        if (timeSinceLastAction < actionCooldownMillis) {
-            Timber.v("Action '$key' cooldown active: ${timeSinceLastAction}ms since last action")
-            return false
-        }
-        lastActionTimestamps[key] = now
-        Timber.d("Action '$key' allowed (cooldown: ${actionCooldownMillis}ms)")
-        return true
     }
 }
