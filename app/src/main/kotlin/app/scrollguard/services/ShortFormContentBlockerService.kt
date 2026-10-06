@@ -10,6 +10,9 @@ import android.graphics.Rect
 import android.os.Handler
 import android.os.Looper
 import android.os.SystemClock
+import android.os.Build
+import android.util.DisplayMetrics
+import android.view.WindowManager
 import android.view.accessibility.AccessibilityEvent
 import android.view.accessibility.AccessibilityNodeInfo
 import android.view.accessibility.AccessibilityWindowInfo
@@ -82,6 +85,7 @@ class ShortFormContentBlockerService : AccessibilityService() {
         }.onEach { (packages, mode) ->
             enabledPackages = packages.toSet()
             instagramMode = mode
+            ProtectionRuntime.configured(mode, PackageConstants.INSTAGRAM_PACKAGE in enabledPackages)
             checkInstagram.run()
         }.catch { Timber.e(it, "Could not read blocker preferences") }.launchIn(scope)
     }
@@ -153,7 +157,18 @@ class ShortFormContentBlockerService : AccessibilityService() {
         root.getBoundsInScreen(rect)
         return MediaBounds(rect.left, rect.top, rect.right, rect.bottom)
             .takeIf { it.width > 0 && it.height > 0 }
-            ?: resources.displayMetrics.let { MediaBounds(0, 0, it.widthPixels, it.heightPixels) }
+            ?: displayBounds()
+    }
+
+    @Suppress("DEPRECATION")
+    private fun displayBounds(): MediaBounds {
+        val manager = getSystemService(WINDOW_SERVICE) as WindowManager
+        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.R) {
+            return manager.currentWindowMetrics.bounds.let { MediaBounds(it.left, it.top, it.right, it.bottom) }
+        }
+        val metrics = DisplayMetrics()
+        manager.defaultDisplay.getRealMetrics(metrics)
+        return MediaBounds(0, 0, metrics.widthPixels, metrics.heightPixels)
     }
 
     private fun enforceInstagram() {
@@ -169,12 +184,17 @@ class ShortFormContentBlockerService : AccessibilityService() {
             return
         }
         if (foreground == null) {
-            // Missing roots previously disabled protection. On an Instagram entry without a
-            // tree, exit the app; no video identifiers are needed for this fallback.
-            if (SystemClock.uptimeMillis() - instagramEntryHintAt < 2_000L || shield.isShowing) {
+            // A cold launch can briefly have no tree. Lock it immediately while the interface
+            // loads, so startup latency cannot expose Home or kick the user out of messages.
+            if (SystemClock.uptimeMillis() - instagramEntryHintAt < 5_000L || shield.isShowing) {
                 monitoredInstagram = true
-                ProtectionRuntime.instagramCheck("Interface unavailable — closing Instagram")
-                exitBlockedApp(PackageConstants.INSTAGRAM_PACKAGE, "Interface unavailable; Instagram blocked")
+                ProtectionRuntime.instagramCheck("Loading interface — feed locked")
+                val attached = shield.show(InstagramLockPanel(displayBounds(),
+                    instagramMode == InstagramProtectionMode.APP_LOCK, false, false))
+                if (!attached || instagramMode == InstagramProtectionMode.APP_LOCK ||
+                    SystemClock.uptimeMillis() - instagramEntryHintAt >= 5_000L) {
+                    exitBlockedApp(PackageConstants.INSTAGRAM_PACKAGE, "Interface unavailable; Instagram blocked")
+                }
             } else clearInstagram()
             return
         }
@@ -224,6 +244,7 @@ class ShortFormContentBlockerService : AccessibilityService() {
         val now = SystemClock.uptimeMillis()
         if (now - lastHomeActionAt < 500L) return
         lastHomeActionAt = now
+        Timber.d("Leaving blocked app %s: %s", packageName, reason)
         val result = DetectionResult(packageName, 1, 1, listOf(reason), action = BlockAction.HOME)
         DetectionDiagnostics.report(result)
         val success = performGlobalAction(GLOBAL_ACTION_HOME)
@@ -249,6 +270,7 @@ class ShortFormContentBlockerService : AccessibilityService() {
         val clicked = target?.let {
             runCatching { it.performAction(AccessibilityNodeInfo.ACTION_CLICK) }.getOrDefault(false)
         } ?: false
+        Timber.d("Instagram navigation %s accepted: %s", destination, clicked)
         if (!clicked) shield.navigationFailed()
         // Never uncover the feed just because a navigation command was accepted.
         handler.postDelayed(checkInstagram, 100L)

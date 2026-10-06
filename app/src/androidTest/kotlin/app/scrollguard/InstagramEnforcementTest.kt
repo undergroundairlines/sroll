@@ -22,6 +22,8 @@ import org.junit.Assert.assertFalse
 import org.junit.Assert.assertTrue
 import org.junit.Before
 import org.junit.Test
+import org.junit.Rule
+import org.junit.rules.TestName
 import org.junit.runner.RunWith
 import java.io.File
 
@@ -29,6 +31,7 @@ import java.io.File
  * The synthetic UI proves enforcement mechanics; it is not a test of Instagram's private UI. */
 @RunWith(AndroidJUnit4::class)
 class InstagramEnforcementTest {
+    @get:Rule val testName = TestName()
     private val instrumentation = InstrumentationRegistry.getInstrumentation()
     private lateinit var device: UiDevice
     private val preferences by lazy { UserPreferencesProvider(instrumentation.targetContext) }
@@ -54,10 +57,17 @@ class InstagramEnforcementTest {
         }
         device.executeShellCommand("settings put secure enabled_accessibility_services app.scrollguard/app.scrollguard.services.ShortFormContentBlockerService")
         device.executeShellCommand("settings put secure accessibility_enabled 1")
-        awaitCondition { ProtectionRuntime.state.value.connected }
+        awaitCondition {
+            val state = ProtectionRuntime.state.value
+            state.connected && state.preferencesApplied && state.instagramEnabled &&
+                state.instagramMode == InstagramProtectionMode.FEED_LOCK
+        }
     }
 
     @After fun leaveFixture() {
+        val directory = instrumentation.targetContext.getExternalFilesDir(null)
+        device.takeScreenshot(File(directory, "${testName.methodName}.png"))
+        device.dumpWindowHierarchy(File(directory, "${testName.methodName}.xml"))
         device.pressHome()
         device.setOrientationNatural()
         device.unfreezeRotation()
@@ -68,7 +78,8 @@ class InstagramEnforcementTest {
     }
 
     private fun awaitLock() {
-        assertTrue("Touchable lock must appear", device.wait(Until.hasObject(guardTitle), 8_000L))
+        assertTrue("Touchable lock must appear: ${ProtectionRuntime.state.value}; package=${device.currentPackageName}",
+            device.wait(Until.hasObject(guardTitle), 15_000L))
     }
 
     private fun awaitCondition(condition: () -> Boolean) {
@@ -102,7 +113,8 @@ class InstagramEnforcementTest {
     @Test fun completelyUnknownInterfaceIsAlsoLocked() {
         open("unknown")
         awaitLock()
-        device.swipe(200, 700, 200, 200, 20)
+        device.swipe(device.displayWidth / 2, device.displayHeight * 3 / 5,
+            device.displayWidth / 2, device.displayHeight * 2 / 5, 20)
         assertEquals("Scroll: 0; clicks: 0", fixtureStatus())
     }
 
@@ -148,7 +160,8 @@ class InstagramEnforcementTest {
         awaitLock()
         runBlocking { preferences.setTrackedPackages(emptyList()) }
         assertTrue(device.wait(Until.gone(guardTitle), 8_000L))
-        device.swipe(200, 700, 200, 200, 20)
+        device.swipe(device.displayWidth / 2, device.displayHeight * 3 / 5,
+            device.displayWidth / 2, device.displayHeight * 2 / 5, 20)
         awaitCondition { fixtureStatus() != "Scroll: 0; clicks: 0" }
     }
 

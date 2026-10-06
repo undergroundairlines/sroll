@@ -62,18 +62,7 @@ internal class InstagramLockOverlay(
             // No FLAG_NOT_TOUCHABLE: that was the old cover's scrolling bypass.
         }
         return runCatching {
-            title?.text = if (panel.wholeApp) "Instagram is locked" else "Your feed is locked"
-            explanation?.text = if (panel.wholeApp) {
-                "You chose to block the whole app. Your time is yours."
-            } else {
-                "Home, Reels and Explore are off limits.\nOpen messages or your profile with a purpose."
-            }
-            messages?.visibility = if (panel.wholeApp) View.GONE else View.VISIBLE
-            profile?.visibility = if (panel.wholeApp) View.GONE else View.VISIBLE
-            messages?.isEnabled = panel.canOpenMessages
-            profile?.isEnabled = panel.canOpenProfile
-            messages?.alpha = if (panel.canOpenMessages) 1f else 0.4f
-            profile?.alpha = if (panel.canOpenProfile) 1f else 0.4f
+            updateLabels(panel)
             if (view == null) windows.addView(root, params)
             else if (lastPanel?.bounds != panel.bounds) windows.updateViewLayout(root, params)
             view = root
@@ -100,7 +89,34 @@ internal class InstagramLockOverlay(
         profile = null
     }
 
+    private fun updateLabels(panel: InstagramLockPanel) {
+        title?.text = if (panel.wholeApp) "Instagram is locked" else "Your feed is locked"
+        explanation?.text = if (panel.wholeApp) {
+            "You chose to block the whole app. Your time is yours."
+        } else {
+            "Home, Reels and Explore are off limits.\nOpen messages or your profile with a purpose."
+        }
+        messages?.visibility = if (panel.wholeApp) View.GONE else View.VISIBLE
+        profile?.visibility = if (panel.wholeApp) View.GONE else View.VISIBLE
+        messages?.isEnabled = panel.canOpenMessages
+        profile?.isEnabled = panel.canOpenProfile
+        messages?.alpha = if (panel.canOpenMessages) 1f else 0.4f
+        profile?.alpha = if (panel.canOpenProfile) 1f else 0.4f
+    }
+
     private fun buildView(): View {
+        val root = FrameLayout(context).apply {
+            setBackgroundColor(Color.rgb(12, 12, 12))
+            isClickable = true
+        }
+        // Register a minimal touch-catching window before cold-start TextView/Button work.
+        root.post {
+            if (view === root) buildContent(root)
+        }
+        return root
+    }
+
+    private fun buildContent(root: FrameLayout) {
         val density = context.resources.displayMetrics.density
         fun dp(value: Int) = (value * density).toInt()
         val content = LinearLayout(context).apply {
@@ -146,13 +162,10 @@ internal class InstagramLockOverlay(
         button("Leave Instagram", R.id.guard_leave, false, onLeave)
         content.addView(label("The feed stays locked until you change protection in Scroll Guard.",
             12f, Color.rgb(140, 140, 140)))
-        return FrameLayout(context).apply {
-            setBackgroundColor(Color.rgb(12, 12, 12))
-            isClickable = true
-            addView(ScrollView(context).apply {
-                isFillViewport = true
-                addView(content)
-            }, FrameLayout.LayoutParams(-1, -1))
-        }
+        root.addView(ScrollView(context).apply {
+            isFillViewport = true
+            addView(content)
+        }, FrameLayout.LayoutParams(-1, -1))
+        lastPanel?.let(::updateLabels)
     }
 }

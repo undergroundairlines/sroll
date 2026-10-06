@@ -4,6 +4,7 @@ package com.instagram.android
 import android.app.Activity
 import android.content.Intent
 import android.os.Bundle
+import android.view.View
 import android.widget.Button
 import android.widget.LinearLayout
 import android.widget.ScrollView
@@ -27,7 +28,11 @@ class MainActivity : Activity() {
             orientation = LinearLayout.VERTICAL
             setPadding(0, 80, 0, 80)
         }
-        val body = LinearLayout(this).apply { orientation = LinearLayout.VERTICAL }
+        val body = LinearLayout(this).apply {
+            orientation = LinearLayout.VERTICAL
+            // Expose screen containers just as real accessible list/viewer containers are exposed.
+            importantForAccessibility = View.IMPORTANT_FOR_ACCESSIBILITY_YES
+        }
         root.addView(body, LinearLayout.LayoutParams(-1, 0, 1f))
         fun label(textValue: String, viewId: Int = 0): TextView = TextView(this).apply {
             text = textValue
