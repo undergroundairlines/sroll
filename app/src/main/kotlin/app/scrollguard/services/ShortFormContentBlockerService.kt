@@ -186,7 +186,7 @@ class ShortFormContentBlockerService : AccessibilityService() {
         if (foreground == null) {
             // A cold launch can briefly have no tree. Lock it immediately while the interface
             // loads, so startup latency cannot expose Home or kick the user out of messages.
-            if (SystemClock.uptimeMillis() - instagramEntryHintAt < 5_000L || shield.isShowing) {
+            if (monitoredInstagram || SystemClock.uptimeMillis() - instagramEntryHintAt < 5_000L || shield.isShowing) {
                 monitoredInstagram = true
                 ProtectionRuntime.instagramCheck("Loading interface — feed locked")
                 val attached = shield.show(InstagramLockPanel(displayBounds(),
