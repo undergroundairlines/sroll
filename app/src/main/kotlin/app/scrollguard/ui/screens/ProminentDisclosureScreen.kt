@@ -105,8 +105,10 @@ fun ProminentDisclosureScreen(
             DisclosureCard(
                 icon = Icons.Rounded.Settings,
                 title = "What This App Uses",
-                content = "Scroll Guard uses Android's Accessibility Service to detect YouTube Shorts and Instagram Reels, and to detect when TikTok opens.\n\n" +
-                    "It reads visible interface structure from only the apps you enable, then presses Back for short-video feeds or Home for TikTok.",
+                content = "Scroll Guard uses Android's Accessibility Service to block YouTube Shorts, lock Instagram feeds, and block TikTok.\n\n" +
+                    "It reads interface structure in the apps you enable. It can cover Instagram with a touch-blocking lock, " +
+                    "open messages or your profile when you tap those buttons, and use Back or Home to leave blocked content. " +
+                    "It observes app window changes so the lock disappears when you leave Instagram.",
             )
 
             Spacer(modifier = Modifier.height(16.dp))

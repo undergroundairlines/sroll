@@ -37,19 +37,19 @@ object PackageConstants {
             packageName = YOUTUBE_PACKAGE,
             displayName = "YouTube",
             description = "Block YouTube Shorts",
-            isEnabled = false,
+            isEnabled = true,
         ),
         TrackedPackage(
             packageName = INSTAGRAM_PACKAGE,
             displayName = "Instagram",
-            description = "Skip Home Reels; block the Reels tab",
-            isEnabled = false,
+            description = "Lock Home feed, Reels and Explore",
+            isEnabled = true,
         ),
         TrackedPackage(
             packageName = TIKTOK_PACKAGE,
             displayName = "TikTok",
             description = "Block the entire app",
-            isEnabled = false,
+            isEnabled = true,
         ),
     )
 

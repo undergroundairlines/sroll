@@ -37,3 +37,5 @@ dependencyResolutionManagement {
 
 rootProject.name = "Scroll-Guard"
 include(":app")
+// Only installed in the emulator test workflow; never included in the delivered APK.
+include(":guard-test-fixture")

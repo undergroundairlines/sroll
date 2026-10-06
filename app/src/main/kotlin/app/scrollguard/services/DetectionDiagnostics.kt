@@ -43,12 +43,13 @@ object DetectionDiagnostics {
             val previous = current[result.packageName]
             if (
                 previous == null ||
+                result.action == BlockAction.LOCK_FEED ||
                 now - previous.timestampMillis > SAMPLE_WINDOW_MILLIS ||
                 record.score >= previous.score ||
                 (result.shouldBlock && result.action != previous.action)
             ) {
                 val priorOutcome = previous?.actionStatus
-                val preserveOutcome = previous != null &&
+                val preserveOutcome = result.action != BlockAction.LOCK_FEED && previous != null &&
                     now - previous.timestampMillis <= SAMPLE_WINDOW_MILLIS &&
                     previous.action == result.action &&
                     priorOutcome != null && isCompletedOutcome(priorOutcome)
@@ -93,6 +94,7 @@ object DetectionDiagnostics {
 
     private fun isCompletedOutcome(status: DetectionActionStatus): Boolean =
         status == DetectionActionStatus.PERFORMED ||
+            status == DetectionActionStatus.TOUCH_BLOCKED ||
             status == DetectionActionStatus.FEED_SCROLL_SENT ||
             status == DetectionActionStatus.FAILED
 }

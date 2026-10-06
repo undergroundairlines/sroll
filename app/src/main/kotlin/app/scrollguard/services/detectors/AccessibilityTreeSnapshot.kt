@@ -39,6 +39,19 @@ internal class AccessibilityTreeSnapshot internal constructor(
         node.visible && fragments.any { fragment -> node.id.contains(fragment.normalized()) }
     }
 
+    fun hasOnScreenId(viewport: MediaBounds, vararg fragments: String): Boolean = nodes.any { node ->
+        node.visible && fragments.any { node.id.substringAfterLast('/').startsWith(it.normalized()) } &&
+            MediaBounds(node.left, node.top, node.right, node.bottom).intersect(viewport) != null
+    }
+
+    fun hasVisibleContentId(viewport: MediaBounds, minHeightFraction: Float,
+        vararg fragments: String): Boolean = nodes.any { node ->
+        val visibleBounds = MediaBounds(node.left, node.top, node.right, node.bottom).intersect(viewport)
+        node.visible && visibleBounds != null && visibleBounds.width >= viewport.width * 0.55f &&
+            visibleBounds.height >= viewport.height * minHeightFraction &&
+            fragments.any { node.id.substringAfterLast('/').startsWith(it.normalized()) }
+    }
+
     fun hasSelectedId(vararg fragments: String): Boolean = nodes.any { node ->
         node.visible && node.selected && fragments.any { fragment ->
             node.id.contains(fragment.normalized())

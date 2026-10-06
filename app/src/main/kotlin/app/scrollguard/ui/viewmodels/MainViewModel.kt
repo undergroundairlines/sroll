@@ -22,6 +22,9 @@ import androidx.lifecycle.AndroidViewModel
 import androidx.lifecycle.viewModelScope
 import app.scrollguard.models.DetectionDiagnostic
 import app.scrollguard.models.TrackedPackage
+import app.scrollguard.models.InstagramProtectionMode
+import app.scrollguard.services.ProtectionRuntime
+import app.scrollguard.services.ProtectionRuntimeState
 import app.scrollguard.services.DetectionDiagnostics
 import app.scrollguard.services.BlockStats
 import app.scrollguard.services.BlockStatsStore
@@ -56,6 +59,8 @@ data class ServiceState(
     val strictModePendingTarget: String? = null,
     val strictModeRemainingSeconds: Long = 0L,
     val showDisclosure: Boolean = false,
+    val instagramProtectionMode: InstagramProtectionMode = InstagramProtectionMode.FEED_LOCK,
+    val runtime: ProtectionRuntimeState = ProtectionRuntimeState(),
 )
 
 /**
@@ -89,6 +94,16 @@ class MainViewModel(
         observeDiagnostics()
         observeStrictMode()
         startStrictModeTicker()
+        viewModelScope.launch {
+            userPreferencesProvider.getInstagramProtectionMode().collect { mode ->
+                _serviceState.update { it.copy(instagramProtectionMode = mode) }
+            }
+        }
+        viewModelScope.launch {
+            ProtectionRuntime.state.collect { runtime ->
+                _serviceState.update { it.copy(runtime = runtime) }
+            }
+        }
     }
 
     private fun observeDiagnostics() {
@@ -303,6 +318,12 @@ class MainViewModel(
     fun cancelStrictModeUnlock() {
         viewModelScope.launch {
             userPreferencesProvider.cancelStrictModeUnlock()
+        }
+    }
+
+    fun setInstagramProtectionMode(mode: InstagramProtectionMode) {
+        viewModelScope.launch {
+            userPreferencesProvider.requestInstagramProtectionMode(mode, System.currentTimeMillis())
         }
     }
 

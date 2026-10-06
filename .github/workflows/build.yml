@@ -12,7 +12,7 @@ permissions:
 jobs:
   build:
     runs-on: ubuntu-latest
-    timeout-minutes: 30
+    timeout-minutes: 45
 
     steps:
       - name: Check out source
@@ -38,6 +38,30 @@ jobs:
 
       - name: Test, lint, and build debug APK
         run: gradle test lint assembleDebug --stacktrace
+
+      - name: Enable emulator acceleration
+        run: sudo chmod 666 /dev/kvm
+
+      - name: Verify real accessibility enforcement on Android 15
+        uses: reactivecircus/android-emulator-runner@v2
+        with:
+          api-level: 35
+          arch: x86_64
+          target: google_apis
+          disable-animations: true
+          emulator-options: -no-window -gpu swiftshader_indirect -noaudio -no-boot-anim -no-snapshot
+          script: gradle :guard-test-fixture:installDebug :app:connectedDebugAndroidTest --stacktrace && adb pull /sdcard/Android/data/app.scrollguard/files/feed-lock.png app/build/reports/feed-lock.png
+
+      - name: Upload verification reports
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: scroll-guard-verification
+          path: |
+            app/build/reports/
+            app/build/outputs/androidTest-results/
+          if-no-files-found: warn
+          retention-days: 14
 
       - name: Upload installable APK
         uses: actions/upload-artifact@v4

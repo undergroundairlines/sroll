@@ -1,0 +1,7 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <item name="guard_title" type="id" />
+    <item name="guard_messages" type="id" />
+    <item name="guard_profile" type="id" />
+    <item name="guard_leave" type="id" />
+</resources>

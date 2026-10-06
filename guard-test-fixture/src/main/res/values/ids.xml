@@ -1,0 +1,11 @@
+<resources>
+    <item name="feed_tab" type="id" />
+    <item name="direct_tab" type="id" />
+    <item name="profile_tab" type="id" />
+    <item name="row_feed_profile_header" type="id" />
+    <item name="direct_thread" type="id" />
+    <item name="row_profile_header_imageview_frame_layout" type="id" />
+    <item name="profile_user_info_compose_view" type="id" />
+    <item name="reel_viewer" type="id" />
+    <item name="fixture_status" type="id" />
+</resources>
