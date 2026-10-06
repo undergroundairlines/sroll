@@ -128,7 +128,7 @@ class ShortFormContentBlockerService : AccessibilityService() {
         val activeRoot = rootInActiveWindow
         val activePackage = activeRoot?.packageName?.toString()
         // Notification shade, system dialogs and other apps must stay usable.
-        if (activePackage != null && activePackage != applicationContext.packageName &&
+        if (activeRoot != null && activePackage != null && activePackage != applicationContext.packageName &&
             activePackage != PackageConstants.INSTAGRAM_PACKAGE) {
             return ForegroundApplication(activeRoot, boundsOf(activeRoot))
         }
