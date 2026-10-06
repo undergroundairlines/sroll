@@ -68,6 +68,10 @@ class InstagramEnforcementTest {
         val directory = instrumentation.targetContext.getExternalFilesDir(null)
         device.takeScreenshot(File(directory, "${testName.methodName}.png"))
         device.dumpWindowHierarchy(File(directory, "${testName.methodName}.xml"))
+        // Gradle uninstalls the target after instrumentation. Preserve emulator screenshots
+        // outside its app directory before that cleanup, using the test runner's shell access.
+        device.executeShellCommand("mkdir -p /sdcard/Download/scrollguard-verification")
+        device.executeShellCommand("cp /sdcard/Android/data/app.scrollguard/files/* /sdcard/Download/scrollguard-verification/")
         device.pressHome()
         device.setOrientationNatural()
         device.unfreezeRotation()
@@ -124,7 +128,8 @@ class InstagramEnforcementTest {
         device.findObject(By.res("app.scrollguard", "guard_messages")).click()
         assertTrue(device.wait(Until.hasObject(By.text("Fixture messages")), 8_000L))
         assertTrue(device.wait(Until.gone(guardTitle), 8_000L))
-        device.findObject(By.text("Open contact profile")).click()
+        val contact = device.wait(Until.findObject(By.text("Open contact profile")), 8_000L)
+        requireNotNull(contact) { "Contact profile button must be present" }.click()
         assertTrue(device.wait(Until.hasObject(By.text("Fixture profile")), 8_000L))
         assertTrue(device.wait(Until.gone(guardTitle), 8_000L))
         device.findObject(By.res("com.instagram.android", "feed_tab")).click()

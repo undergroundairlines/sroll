@@ -50,7 +50,7 @@ jobs:
           target: google_apis
           disable-animations: true
           emulator-options: -no-window -gpu swiftshader_indirect -noaudio -no-boot-anim -no-snapshot
-          script: gradle :guard-test-fixture:installDebug :app:connectedDebugAndroidTest --stacktrace; guard_test_result=$?; adb pull /sdcard/Android/data/app.scrollguard/files app/build/reports/device; exit "$guard_test_result"
+          script: gradle :guard-test-fixture:installDebug :app:connectedDebugAndroidTest --stacktrace; guard_test_result=$?; adb pull /sdcard/Download/scrollguard-verification app/build/reports/device; exit "$guard_test_result"
 
       - name: Upload verification reports
         if: always()

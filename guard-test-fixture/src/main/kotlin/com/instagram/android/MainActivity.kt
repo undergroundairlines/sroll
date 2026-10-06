@@ -45,6 +45,7 @@ class MainActivity : Activity() {
                 body.id = R.id.direct_thread
                 body.addView(label("Fixture messages"))
                 body.addView(Button(this).apply {
+                    isAllCaps = false
                     text = "Open contact profile"
                     setOnClickListener { render("profile") }
                 })
