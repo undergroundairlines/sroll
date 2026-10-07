@@ -321,6 +321,17 @@ class InstagramFeedPolicyTest {
         assertEquals(InstagramScreen.STORY, screen(*nodes.toTypedArray()))
     }
 
+    @Test fun aSharedPostHeaderInsideAStoryIsNotRetainedHomeContent() {
+        val nodes = listOf(node("root", viewport), node("reel_viewer", viewport, parent = 0),
+            node("row_feed_profile_header", parent = 1))
+        assertEquals(InstagramScreen.STORY, screen(*nodes.toTypedArray()))
+    }
+
+    @Test fun anExplicitReelPagerNestedInAStoryIsStillReelBrowsing() {
+        val nodes = foregroundStoryNodes() + node("clips_viewer_view_pager", viewport, parent = 2)
+        assertEquals(InstagramScreen.REELS, screen(*nodes.toTypedArray()))
+    }
+
     @Test fun retainedHomeReelBehindStoryDoesNotBlockItsForegroundViewer() {
         val nodes = foregroundStoryNodes() + node("clips_video_container", viewport, parent = 1)
         assertEquals(InstagramScreen.STORY, screen(*nodes.toTypedArray()))

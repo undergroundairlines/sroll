@@ -63,8 +63,9 @@ browsing viewers remain protected even if nested under history. There is no time
 leaves a previous safe screen unlocked.
 
 Stories take priority over retained background Home nodes when a current large Story viewer and
-its controls or sibling drawing order identify the foreground surface. Story media, including a
-reshared Reel, does not trigger feed blocking. Cached Story content known to be behind Home cannot
+its controls or sibling drawing order identify the foreground surface. Story media previews,
+including a reshared Reel or post, do not trigger feed blocking. Opening an explicit Reel browsing
+pager still restores protection. Cached Story content known to be behind Home cannot
 unlock Home. **Open Stories** on the lock clicks an accessible native Story avatar; it stays
 protected until a Story destination is confirmed. The button is available only when Instagram
 exposes a small top-row Story avatar with an English Story navigation label; it does not infer a

@@ -140,11 +140,12 @@ internal class AccessibilityTreeSnapshot internal constructor(
     private fun foregroundStories(viewport: MediaBounds): Set<Int> {
         val homes = homeNodes(viewport)
         return storyViewers(viewport).filter { viewer ->
+            val backgroundHomes = homes.filter { viewer !in ancestors(it) }
             val controls = nodes.withIndex().filter { (index, n) -> n.onScreen(viewport) && viewer in ancestors(index) }
             val hasProgress = controls.any { it.value.id.substringAfterLast('/') == "reel_viewer_progress_bar" }
             val hasHeader = controls.any { it.value.id.substringAfterLast('/') == "reel_viewer_title" }
-            homes.none { behind(viewer, it) } &&
-                (homes.isEmpty() || homes.all { behind(it, viewer) } || (hasProgress && hasHeader))
+            backgroundHomes.none { behind(viewer, it) } &&
+                (backgroundHomes.isEmpty() || backgroundHomes.all { behind(it, viewer) } || (hasProgress && hasHeader))
         }.toSet()
     }
 
@@ -166,11 +167,12 @@ internal class AccessibilityTreeSnapshot internal constructor(
 
     /** Media in message history/Stories is preview content, not evidence of a separate scrolling feed. */
     fun hasExternalMedia(viewport: MediaBounds, fraction: Float, vararg ids: String,
-        allowMessagePreview: Boolean = true): Boolean {
-        val histories = if (allowMessagePreview) conversationHistories(viewport) else emptySet()
+        allowInlineMediaPreview: Boolean = true): Boolean {
+        val histories = if (allowInlineMediaPreview) conversationHistories(viewport) else emptySet()
         val stories = foregroundStories(viewport)
         return contentIndices(viewport, fraction, ids.toSet(), exact = false).any { index ->
-            ancestors(index).none { it in histories || it in stories } && stories.none { behind(index, it) }
+            ancestors(index).none { it in histories || (allowInlineMediaPreview && it in stories) } &&
+                stories.none { behind(index, it) }
         }
     }
 
