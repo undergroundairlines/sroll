@@ -152,7 +152,8 @@ class ShortFormContentBlockerService : AccessibilityService() {
     }
 
     private data class ForegroundApplication(val packageName: String?, val windowId: Int,
-        val root: AccessibilityNodeInfo?, val bounds: MediaBounds, val systemControls: Boolean = false)
+        val root: AccessibilityNodeInfo?, val bounds: MediaBounds, val systemControls: Boolean = false,
+        val contentBounds: MediaBounds = bounds, val keyboardBounds: MediaBounds? = null)
 
     private fun foregroundApplication(): ForegroundApplication? {
         val visibleWindows = windows
@@ -171,14 +172,13 @@ class ShortFormContentBlockerService : AccessibilityService() {
             if (root?.packageName != null) windowPackages[application.id] = root.packageName.toString()
             windowPackages.keys.retainAll(applications.map { it.id }.toSet())
             val rect = Rect().also(application::getBoundsInScreen)
-            var bounds = MediaBounds(rect.left, rect.top, rect.right, rect.bottom).intersect(safeDisplayBounds()) ?: return null
-            // Accessibility overlays sit above IMEs. Clip explicitly to keep the keyboard touchable.
-            visibleWindows.firstOrNull { it.type == AccessibilityWindowInfo.TYPE_INPUT_METHOD }?.let { ime ->
+            val bounds = MediaBounds(rect.left, rect.top, rect.right, rect.bottom).intersect(safeDisplayBounds()) ?: return null
+            // Keep classification coordinates intact and subtract the IME from touch shielding only.
+            val keyboardBounds = visibleWindows.firstOrNull { it.type == AccessibilityWindowInfo.TYPE_INPUT_METHOD }?.let { ime ->
                 val keyboard = Rect().also(ime::getBoundsInScreen)
-                if (keyboard.top > bounds.top && keyboard.bottom >= bounds.bottom && keyboard.width() > bounds.width / 2)
-                    bounds = bounds.copy(bottom = minOf(bounds.bottom, keyboard.top))
+                MediaBounds(keyboard.left, keyboard.top, keyboard.right, keyboard.bottom).intersect(bounds)
             }
-            return ForegroundApplication(packageName, application.id, root, bounds)
+            return ForegroundApplication(packageName, application.id, root, bounds, contentBounds = bounds, keyboardBounds = keyboardBounds)
         }
         // The active root can be our shield or the keyboard; neither confirms Instagram foreground.
         val root = rootInActiveWindow ?: return null
@@ -188,7 +188,11 @@ class ShortFormContentBlockerService : AccessibilityService() {
         if (root.window?.type != AccessibilityWindowInfo.TYPE_APPLICATION) return null
         val rect = Rect().also(root::getBoundsInScreen)
         val bounds = MediaBounds(rect.left, rect.top, rect.right, rect.bottom).intersect(safeDisplayBounds()) ?: return null
-        return ForegroundApplication(packageName, root.windowId, root, bounds)
+        val keyboardBounds = visibleWindows.firstOrNull { it.type == AccessibilityWindowInfo.TYPE_INPUT_METHOD }?.let { ime ->
+            val keyboard = Rect().also(ime::getBoundsInScreen)
+            MediaBounds(keyboard.left, keyboard.top, keyboard.right, keyboard.bottom).intersect(bounds)
+        }
+        return ForegroundApplication(packageName, root.windowId, root, bounds, keyboardBounds = keyboardBounds)
     }
 
     @Suppress("DEPRECATION")
@@ -234,7 +238,9 @@ class ShortFormContentBlockerService : AccessibilityService() {
         }
         lastInstagramWindowId = foreground.windowId
         val tree = foreground.root?.let { runCatching { AccessibilityTreeSnapshot.from(it, includeLabels = false) }.getOrNull() }
-        val screen = InstagramFeedPolicy.evaluate(instagramMode, tree, foreground.bounds)
+        // IME occlusion changes touch shielding, not the application's content coordinates.
+        // Android can keep a focused chat composer below the keyboard and still accept typing.
+        val screen = InstagramFeedPolicy.evaluate(instagramMode, tree, foreground.contentBounds)
         val now = SystemClock.uptimeMillis()
         pendingDestination?.let { destination ->
             val confirmed = (destination == InstagramDestination.MESSAGES && screen == InstagramScreen.MESSAGES) ||
@@ -250,7 +256,7 @@ class ShortFormContentBlockerService : AccessibilityService() {
             instagramMode == InstagramProtectionMode.SOCIAL) canWatchShared = true
         if (screen != InstagramScreen.REELS || instagramMode != InstagramProtectionMode.SOCIAL ||
             conversationWindow != foreground.windowId) canWatchShared = false
-        wasConversation = screen == InstagramScreen.MESSAGES && tree?.hasConversation(foreground.bounds) == true
+        wasConversation = screen == InstagramScreen.MESSAGES && tree?.hasConversation(foreground.contentBounds) == true
         if (wasConversation) { conversationCheckedAt = now; conversationWindow = foreground.windowId }
         if (screen != InstagramScreen.REELS) watchingSharedReel = false
         if (screen == InstagramScreen.REELS && instagramMode == InstagramProtectionMode.SOCIAL &&
@@ -263,7 +269,7 @@ class ShortFormContentBlockerService : AccessibilityService() {
         lastScreen = screen
         val rootState = when { tree == null -> "Missing"; tree.truncated -> "Incomplete (${tree.nodeCount} nodes)"; else -> "Complete (${tree.nodeCount} nodes)" }
         val result = DetectionResult(PackageConstants.INSTAGRAM_PACKAGE, if (screen.allowed) 0 else 1, 1,
-            listOf(description, InstagramFeedPolicy.reason(screen, tree, foreground.bounds), "Root $rootState"),
+            listOf(description, InstagramFeedPolicy.reason(screen, tree, foreground.contentBounds), "Root $rootState"),
             tree?.diagnosticIdentifiers().orEmpty(), BlockAction.LOCK_FEED)
         DetectionDiagnostics.report(result)
         if (screen.allowed) {
@@ -274,16 +280,17 @@ class ShortFormContentBlockerService : AccessibilityService() {
             val attached = shield.show(InstagramLockPanel(foreground.bounds, instagramMode == InstagramProtectionMode.APP_LOCK,
                 root != null && findNavigation(root, InstagramDestination.MESSAGES) != null,
                 root != null && findNavigation(root, InstagramDestination.PROFILE) != null,
-                watchingSharedReel, instagramMode == InstagramProtectionMode.SOCIAL, canWatchShared))
+                watchingSharedReel, instagramMode == InstagramProtectionMode.SOCIAL, canWatchShared, foreground.keyboardBounds))
             DetectionDiagnostics.reportActionStatus(result.packageName, BlockAction.LOCK_FEED,
                 if (!attached) DetectionActionStatus.FAILED else if (shield.isAttached) DetectionActionStatus.TOUCH_BLOCKED else DetectionActionStatus.READY)
-            if (attached && !recordedLockEpisode && !watchingSharedReel) { blockStats.record(); recordedLockEpisode = true }
+            if (attached && shield.isAttached && !recordedLockEpisode && !watchingSharedReel) { blockStats.record(); recordedLockEpisode = true }
             if (!attached || instagramMode == InstagramProtectionMode.APP_LOCK)
                 exitBlockedApp(result.packageName, if (attached) description else "Shield failed to attach")
         }
         ProtectionRuntime.checked(foreground.packageName, foreground.windowId, rootState, description, shield.status,
-            InstagramObservation(System.currentTimeMillis(), foreground.windowId, foreground.bounds.toString(), rootState,
-                "$description; ${InstagramFeedPolicy.reason(screen, tree, foreground.bounds)}", tree?.structuralReport().orEmpty()))
+            InstagramObservation(System.currentTimeMillis(), foreground.windowId,
+                "content=${foreground.contentBounds}; shield regions=${ShieldGeometry.regions(foreground.bounds, foreground.keyboardBounds)}", rootState,
+                "$description; ${InstagramFeedPolicy.reason(screen, tree, foreground.contentBounds)}", tree?.structuralReport().orEmpty()))
     }
 
     private fun clearInstagram() {
@@ -325,7 +332,7 @@ class ShortFormContentBlockerService : AccessibilityService() {
         if (!canWatchShared || instagramMode != InstagramProtectionMode.SOCIAL ||
             foreground.packageName != PackageConstants.INSTAGRAM_PACKAGE || foreground.windowId != conversationWindow) return
         val tree = foreground.root?.let { runCatching { AccessibilityTreeSnapshot.from(it, includeLabels = false) }.getOrNull() }
-        if (InstagramFeedPolicy.evaluate(instagramMode, tree, foreground.bounds) != InstagramScreen.REELS) return
+        if (InstagramFeedPolicy.evaluate(instagramMode, tree, foreground.contentBounds) != InstagramScreen.REELS) return
         sharedReelWindow = foreground.windowId
         watchingSharedReel = true
         ProtectionRuntime.action("Viewer opened directly from confirmed conversation: watch requested; Instagram gestures remain shielded")

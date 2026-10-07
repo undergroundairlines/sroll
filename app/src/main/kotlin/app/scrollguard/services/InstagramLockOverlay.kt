@@ -29,6 +29,7 @@ internal data class InstagramLockPanel(
     val sharedReel: Boolean = false,
     val socialMode: Boolean = false,
     val canWatchShared: Boolean = false,
+    val keyboardBounds: MediaBounds? = null,
 )
 
 /** A touchable full-window shield. No touches or swipes pass through to the feed. */
@@ -48,20 +49,28 @@ internal class InstagramLockOverlay(
     private var profile: Button? = null
     private var watchShared: Button? = null
     private var attachRequestedAt = 0L
-    val isShowing: Boolean get() = view != null
-    val isAttached: Boolean get() = view?.let { it.isAttachedToWindow && it.isShown && it.width > 0 && it.height > 0 } == true
+    private val extraShields = mutableListOf<View>()
+    val isShowing: Boolean get() = view != null || extraShields.isNotEmpty()
+    val isAttached: Boolean get() = view?.let { it.isAttachedToWindow && it.isShown && it.width > 0 && it.height > 0 } == true &&
+        extraShields.all { it.isAttachedToWindow && it.isShown && it.width > 0 && it.height > 0 }
     var status: String = "Removed"
         private set
 
     fun show(panel: InstagramLockPanel): Boolean {
         if (panel.bounds.width <= 0 || panel.bounds.height <= 0) return false
+        val regions = ShieldGeometry.regions(panel.bounds, panel.keyboardBounds)
+        if (regions.isEmpty()) { hide(); return false }
         if (view?.visibility == View.GONE) {
             hide()
-            if (view != null) return false
+            if (isShowing) return false
         }
-        if (view != null && lastPanel?.sharedReel != panel.sharedReel) hide()
+        if (isShowing && (lastPanel?.sharedReel != panel.sharedReel || lastPanel?.bounds != panel.bounds ||
+                lastPanel?.keyboardBounds != panel.keyboardBounds)) {
+            hide()
+            if (isShowing) return false
+        }
         if (view != null && lastPanel == panel) {
-            if (!isAttached && SystemClock.uptimeMillis() - attachRequestedAt > 1000L) {
+            if (!isAttached && SystemClock.uptimeMillis() - attachRequestedAt > 3000L) {
                 hide()
                 status = "Attachment/layout failed; leaving Instagram"
                 return false
@@ -70,15 +79,15 @@ internal class InstagramLockOverlay(
             return true
         }
         val root = view ?: buildView()
-        val rect = panel.bounds
-        val params = WindowManager.LayoutParams(
-            rect.width, rect.height, WindowManager.LayoutParams.TYPE_ACCESSIBILITY_OVERLAY,
+        val rect = regions.maxBy { it.width.toLong() * it.height }
+        fun parameters(area: MediaBounds) = WindowManager.LayoutParams(
+            area.width, area.height, WindowManager.LayoutParams.TYPE_ACCESSIBILITY_OVERLAY,
             WindowManager.LayoutParams.FLAG_NOT_FOCUSABLE or WindowManager.LayoutParams.FLAG_LAYOUT_IN_SCREEN,
             if (panel.sharedReel) PixelFormat.TRANSLUCENT else PixelFormat.OPAQUE,
         ).apply {
             gravity = Gravity.TOP or Gravity.LEFT
-            x = rect.left
-            y = rect.top
+            x = area.left
+            y = area.top
             if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.R) setFitInsetsTypes(0)
             if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.P) {
                 layoutInDisplayCutoutMode = WindowManager.LayoutParams.LAYOUT_IN_DISPLAY_CUTOUT_MODE_SHORT_EDGES
@@ -88,10 +97,18 @@ internal class InstagramLockOverlay(
         return runCatching {
             updateLabels(panel)
             if (view == null) {
-                windows.addView(root, params)
+                view = root
                 attachRequestedAt = SystemClock.uptimeMillis()
+                windows.addView(root, parameters(rect))
+                regions.filter { it != rect }.forEach { area ->
+                    val extra = FrameLayout(context).apply {
+                        isClickable = true
+                        setBackgroundColor(if (panel.sharedReel) Color.TRANSPARENT else Color.rgb(12, 12, 12))
+                    }
+                    extraShields.add(extra)
+                    windows.addView(extra, parameters(area))
+                }
             }
-            else if (lastPanel?.bounds != panel.bounds) windows.updateViewLayout(root, params)
             view = root
             lastPanel = panel
             status = if (isAttached) "Attached; touchable" else "Attachment/layout pending"
@@ -109,6 +126,7 @@ internal class InstagramLockOverlay(
     }
 
     fun hide() {
+        removeExtraShields()
         val removed = view?.let { runCatching { windows.removeViewImmediate(it) }.isSuccess } ?: true
         if (!removed && view?.isAttachedToWindow == true) {
             // Keep the removal handle and retry on the next foreground check. Hide immediately.
@@ -128,7 +146,23 @@ internal class InstagramLockOverlay(
         messages = null
         profile = null
         watchShared = null
-        status = if (removed) "Removed" else "Removal failed"
+        status = if (removed && extraShields.isEmpty()) "Removed" else "Removal failed; hidden; retry pending"
+    }
+
+    private fun removeExtraShields() {
+        val iterator = extraShields.iterator()
+        while (iterator.hasNext()) {
+            val extra = iterator.next()
+            if (runCatching { windows.removeViewImmediate(extra) }.isSuccess || !extra.isAttachedToWindow) iterator.remove()
+            else {
+                extra.visibility = View.GONE
+                runCatching {
+                    val params = extra.layoutParams as WindowManager.LayoutParams
+                    params.flags = params.flags or WindowManager.LayoutParams.FLAG_NOT_TOUCHABLE
+                    windows.updateViewLayout(extra, params)
+                }
+            }
+        }
     }
 
     private fun updateLabels(panel: InstagramLockPanel) {
@@ -153,10 +187,17 @@ internal class InstagramLockOverlay(
             setBackgroundColor(Color.rgb(12, 12, 12))
             isClickable = true
         }
-        // Register a minimal touch-catching window before cold-start TextView/Button work.
-        root.post {
-            if (view === root) buildContent(root)
-        }
+        // First lay out the minimal touch-catching window. A plain View.post before addView
+        // can run expensive cold-start font/button work BEFORE the first window layout.
+        root.addOnLayoutChangeListener(object : View.OnLayoutChangeListener {
+            override fun onLayoutChange(v: View, left: Int, top: Int, right: Int, bottom: Int,
+                oldLeft: Int, oldTop: Int, oldRight: Int, oldBottom: Int) {
+                if (right > left && bottom > top) {
+                    root.removeOnLayoutChangeListener(this)
+                    root.post { if (view === root) buildContent(root) }
+                }
+            }
+        })
         return root
     }
 

@@ -104,7 +104,8 @@ and contain no captions, messages, usernames, or account content.
     computer is required. Paste the report when asking for a fix; it contains structural metadata,
     not message text, captions, usernames or passwords. No report is sent automatically.
 
-The shield blocks interaction and viewing; it does not directly control Instagram's audio player.
+The opaque feed lock blocks interaction and viewing; the optional shared-Reel shield allows viewing.
+Neither shield directly controls Instagram's audio player.
 Use whole-app mode if you also need to leave any playback. The Android accessibility permission
 must remain enabled; Strict Mode controls the app's switches, not Android's system settings.
 
@@ -133,7 +134,12 @@ windows are available independently of the active root. The service selects curr
 windows, treats IME/system windows separately and clips the overlay to application/system-bar bounds.
 See the official [AccessibilityService reference](https://developer.android.com/reference/android/accessibilityservice/AccessibilityService)
 and [AccessibilityWindowInfo reference](https://developer.android.com/reference/android/view/accessibility/AccessibilityWindowInfo).
-These are Android contracts. All Instagram resource-name interpretations are compatibility
+Classification uses application content coordinates independently of keyboard cutouts: Android can
+leave its focused chat composer behind the IME while continuing to accept typing. Shield rectangles
+cover every app region outside a docked or floating keyboard, with system bars excluded. Cold-start
+shield content is built after the minimal touch-catching window has completed its first layout.
+The window/focus APIs are Android contracts; the separate content and keyboard coordinates were
+observed in the synthetic Android 15 regression. All Instagram resource-name interpretations are compatibility
 assumptions, checked conservatively and exposed in diagnostics.
 
 ## History and update compatibility

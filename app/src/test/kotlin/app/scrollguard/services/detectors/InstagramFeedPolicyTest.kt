@@ -114,6 +114,21 @@ class InstagramFeedPolicyTest {
             InstagramProtectionMode.FEED_LOCK, AccessibilityTreeSnapshot(nodes, false), keyboardViewport))
     }
 
+    @Test fun focusedChatContentBelowImeStillUsesApplicationContentCoordinates() {
+        // Structural coordinates from the failed Android 15 synthetic keyboard test, not Instagram.
+        // The IME began at y=381, but Android left its active editable composer at y=418..464.
+        val content = MediaBounds(0, 24, 320, 616)
+        val shield = content.copy(bottom = 381)
+        val nodes = listOf(
+            node("root", content), node("conversation_page", MediaBounds(0, 80, 320, 512), parent = 0),
+            node("message_list", MediaBounds(0, 153, 320, 345), parent = 1),
+            node("row_thread_composer_edittext", MediaBounds(0, 418, 320, 464), parent = 1, editable = true),
+        )
+        val tree = AccessibilityTreeSnapshot(nodes, false)
+        assertEquals(InstagramScreen.MESSAGES, InstagramFeedPolicy.evaluate(InstagramProtectionMode.FEED_LOCK, tree, content))
+        assertEquals(InstagramScreen.UNKNOWN, InstagramFeedPolicy.evaluate(InstagramProtectionMode.FEED_LOCK, tree, shield))
+    }
+
     @Test fun aComposerAloneCannotUnlockAnUnknownPageEvenWithADirectThreadPrefix() {
         assertFalse(screen(node("direct_thread_composer_edittext", editable = true)).allowed)
         assertFalse(screen(node("message_composer", editable = true)).allowed)

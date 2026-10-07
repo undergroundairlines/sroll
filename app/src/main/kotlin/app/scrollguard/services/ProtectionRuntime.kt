@@ -5,6 +5,7 @@ import app.scrollguard.models.InstagramProtectionMode
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.asStateFlow
 import kotlinx.coroutines.flow.update
+import timber.log.Timber
 
 data class InstagramObservation(
     val timestampMillis: Long,
@@ -64,6 +65,7 @@ object ProtectionRuntime {
         }
     }
     fun action(description: String) {
+        Timber.d("Protection action: %s", description)
         val now = System.currentTimeMillis()
         mutableState.update { it.copy(lastAction = description, actionAtMillis = now,
             transitions = (it.transitions + "$now action=$description").takeLast(16)) }

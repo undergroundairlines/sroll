@@ -73,11 +73,12 @@ class InstagramEnforcementTest {
         val directory = instrumentation.targetContext.getExternalFilesDir(null)
         device.takeScreenshot(File(directory, "${testName.methodName}.png"))
         device.dumpWindowHierarchy(File(directory, "${testName.methodName}.xml"))
+        File(directory, "${testName.methodName}.txt").writeText(ProtectionRuntime.report())
         // Gradle uninstalls the target after instrumentation. Preserve emulator screenshots
         // outside its app directory before that cleanup, using the test runner's shell access.
         device.executeShellCommand("mkdir -p /sdcard/Download/scrollguard-verification")
         // executeShellCommand does not expand a wildcard; copy explicit files.
-        for (extension in listOf("png", "xml")) {
+        for (extension in listOf("png", "xml", "txt")) {
             val fileName = "${testName.methodName}.$extension"
             device.executeShellCommand("cp /sdcard/Android/data/app.scrollguard/files/$fileName /sdcard/Download/scrollguard-verification/$fileName")
         }
@@ -91,19 +92,19 @@ class InstagramEnforcementTest {
     }
 
     private fun awaitLock() {
-        assertTrue("Touchable lock must appear: ${ProtectionRuntime.state.value}; package=${device.currentPackageName}",
-            device.wait(Until.hasObject(guardTitle), 15_000L))
+        val appeared = device.wait(Until.hasObject(guardTitle), 15_000L)
+        assertTrue("Touchable lock must appear: ${ProtectionRuntime.report()}; package=${device.currentPackageName}", appeared)
     }
 
     private fun awaitCondition(condition: () -> Boolean) {
         val deadline = SystemClock.uptimeMillis() + 8_000L
         while (!condition() && SystemClock.uptimeMillis() < deadline) SystemClock.sleep(50L)
-        assertTrue(condition())
+        assertTrue("Condition timed out: ${ProtectionRuntime.report()}", condition())
     }
 
     private fun assertUnlocked() {
-        assertTrue("Allowed destination must be confirmed: ${ProtectionRuntime.state.value}",
-            device.wait(Until.gone(guardTitle), 8_000L))
+        val gone = device.wait(Until.gone(guardTitle), 8_000L)
+        assertTrue("Allowed destination must be confirmed: ${ProtectionRuntime.report()}", gone)
         // A single absent frame does not prove the watchdog leaves a conversation usable.
         repeat(8) {
             SystemClock.sleep(100L)
@@ -113,19 +114,20 @@ class InstagramEnforcementTest {
 
     private fun repeatFeedTouches() {
         repeat(8) {
-            device.swipe(device.displayWidth / 2, device.displayHeight * 4 / 5,
-                device.displayWidth / 2, device.displayHeight / 5, 15)
+            // Start inside the feed; 4/5 landed exactly on the fixture's bottom tabs.
+            device.swipe(device.displayWidth / 2, device.displayHeight * 3 / 5,
+                device.displayWidth / 2, device.displayHeight * 2 / 5, 15)
             // Landscape can scroll the shield's own controls into this position.
             // Avoid invoking purpose buttons while measuring underlying feed taps.
             if (device.displayHeight > device.displayWidth) {
                 val x = device.displayWidth / 3
-                val y = device.displayHeight / 5
+                val y = device.displayHeight * 2 / 5
                 val overControl = device.findObjects(By.pkg("app.scrollguard").clazz("android.widget.Button"))
                     .any { it.visibleBounds.contains(x, y) }
                 if (!overControl) device.click(x, y)
             }
-            device.click(1, device.displayHeight / 5)
-            device.click(device.displayWidth - 2, device.displayHeight / 5)
+            device.click(1, device.displayHeight * 2 / 5)
+            device.click(device.displayWidth - 2, device.displayHeight * 2 / 5)
         }
     }
 
@@ -278,8 +280,9 @@ class InstagramEnforcementTest {
         open("home")
         assertTrue(device.wait(Until.hasObject(By.res("com.instagram.android", "fixture_status")), 8_000L))
         assertUnlocked()
-        device.swipe(device.displayWidth / 2, device.displayHeight * 4 / 5,
-            device.displayWidth / 2, device.displayHeight / 5, 20)
+        val feed = requireNotNull(device.findObject(By.res("com.instagram.android", "feed_recycler_view"))).visibleBounds
+        device.swipe(feed.centerX(), feed.top + feed.height() * 3 / 4,
+            feed.centerX(), feed.top + feed.height() / 4, 20)
         awaitCondition { fixtureStatus() != "Scroll: 0; clicks: 0" }
         for (screen in listOf("home_reel", "unknown", "selected_profile")) {
             open(screen)
