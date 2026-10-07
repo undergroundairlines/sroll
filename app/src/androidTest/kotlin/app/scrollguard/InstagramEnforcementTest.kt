@@ -481,4 +481,21 @@ class InstagramEnforcementTest {
         assertEquals(InstagramProtectionMode.SOCIAL, reopenedPreferences.getInstagramProtectionMode().first())
         assertEquals(listOf("com.instagram.android"), reopenedPreferences.getTrackedPackages().first())
     }
+
+    @Test fun publicPreferenceRemovalCannotBypassStrictDeadline() = runBlocking {
+        preferences.enableStrictMode()
+        preferences.setTrackedPackages(emptyList())
+        assertEquals(listOf("com.instagram.android"), preferences.getTrackedPackages().first())
+        val pending = preferences.getStrictModeSettings().first()
+        assertEquals("com.instagram.android", pending.pendingTarget)
+        assertTrue(pending.unlockAtMillis > System.currentTimeMillis())
+        val reopenedPreferences = UserPreferencesProvider(instrumentation.targetContext)
+        reopenedPreferences.setTrackedPackages(emptyList())
+        assertEquals(pending, reopenedPreferences.getStrictModeSettings().first())
+        assertFalse(reopenedPreferences.completeStrictModeUnlockIfExpired(pending.unlockAtMillis - 1L))
+        assertEquals(listOf("com.instagram.android"), reopenedPreferences.getTrackedPackages().first())
+        assertTrue(reopenedPreferences.completeStrictModeUnlockIfExpired(pending.unlockAtMillis))
+        assertEquals(emptyList<String>(), reopenedPreferences.getTrackedPackages().first())
+        assertTrue(reopenedPreferences.getStrictModeSettings().first().enabled)
+    }
 }
