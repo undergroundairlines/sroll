@@ -28,11 +28,11 @@ if ! certificates="$("$build_tools/apksigner" verify --verbose --print-certs "$a
 fi
 # These are public certificates and signature metadata; no private signing material.
 printf '%s\n' "$certificates" > "$report_directory/$stage-apksigner.txt"
-# Count actual signer certificate digests rather than depending on a summary line
-# whose wording is not part of apksigner's CLI contract. Reject zero/multiple signers.
+# SDK 37 prints "V2 Signer:" where older tools print "Signer #1".
+# One signer can be listed for several schemes; every certificate must match the installed key.
 signer_digests="$(printf '%s\n' "$certificates" | tr -d '\r' |
-    sed -n -E 's/^Signer #[0-9]+ certificate SHA-256 digest: ([0-9A-Fa-f]+)[[:space:]]*$/\1/p' |
-    tr '[:upper:]' '[:lower:]')"
+    sed -n -E 's/^(Signer #[0-9]+|V[234] Signer(:| #[0-9]+:)) certificate SHA-256 digest: ([0-9A-Fa-f]+)[[:space:]]*$/\3/p' |
+    tr '[:upper:]' '[:lower:]' | sort -u)"
 signer_count="$(printf '%s\n' "$signer_digests" | awk 'NF { count++ } END { print count+0 }')"
 certificate="$signer_digests"
 if [[ "$certificate" != "$expected_certificate" || "$signer_count" != "1" ]]; then
