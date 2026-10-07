@@ -132,6 +132,11 @@ internal class AccessibilityTreeSnapshot internal constructor(
             n.id.substringAfterLast('/').startsWith("row_feed_profile_header"))
     }.map { it.index }.toSet()
 
+    fun hasHomeContent(viewport: MediaBounds): Boolean {
+        val histories = conversationHistories(viewport)
+        return homeNodes(viewport).any { index -> ancestors(index).none { it in histories } }
+    }
+
     private fun foregroundStories(viewport: MediaBounds): Set<Int> {
         val homes = homeNodes(viewport)
         return storyViewers(viewport).filter { viewer ->
@@ -150,7 +155,7 @@ internal class AccessibilityTreeSnapshot internal constructor(
         if (!truncated) return true
         val owners = when (screen) {
             InstagramScreen.MESSAGES -> conversationHistories(viewport) +
-                contentIndices(viewport, 0.30f, setOf("direct_thread", "direct_inbox", "inbox_refreshable_thread_list_recyclerview"))
+                contentIndices(viewport, 0.30f, setOf("inbox_refreshable_thread_list_recyclerview"))
             InstagramScreen.STORY -> foregroundStories(viewport)
             else -> emptySet()
         }
@@ -160,8 +165,9 @@ internal class AccessibilityTreeSnapshot internal constructor(
     }
 
     /** Media in message history/Stories is preview content, not evidence of a separate scrolling feed. */
-    fun hasExternalMedia(viewport: MediaBounds, fraction: Float, vararg ids: String): Boolean {
-        val histories = conversationHistories(viewport)
+    fun hasExternalMedia(viewport: MediaBounds, fraction: Float, vararg ids: String,
+        allowMessagePreview: Boolean = true): Boolean {
+        val histories = if (allowMessagePreview) conversationHistories(viewport) else emptySet()
         val stories = foregroundStories(viewport)
         return contentIndices(viewport, fraction, ids.toSet(), exact = false).any { index ->
             ancestors(index).none { it in histories || it in stories } && stories.none { behind(index, it) }

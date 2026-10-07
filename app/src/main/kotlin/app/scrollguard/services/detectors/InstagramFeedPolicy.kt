@@ -46,7 +46,7 @@ internal object InstagramFeedPolicy {
         // A visible video/viewer wins over cached profile or inbox nodes. A small preview does
         // not count as a viewer, but the Home feed remains blocked even without any Reel IDs.
         if (tree.hasExternalMedia(viewport, 0.40f,
-                "clips_viewer_view_pager", "reels_viewer") ||
+                "clips_viewer_view_pager", "reels_viewer", allowMessagePreview = false) ||
             tree.hasExternalMedia(viewport, 0.60f, "clips_video_container")) {
             return InstagramScreen.REELS
         }
@@ -56,7 +56,7 @@ internal object InstagramFeedPolicy {
             return InstagramScreen.STORY
         if (tree.truncated && !tree.contentGapsAreSafe(InstagramScreen.MESSAGES, viewport))
             return InstagramScreen.UNKNOWN
-        if (tree.hasOnScreenId(viewport, "row_feed_profile_header", "feed_recycler_view")) {
+        if (tree.hasHomeContent(viewport)) {
             if (mode == InstagramProtectionMode.SOCIAL &&
                 tree.hasExactOnScreenId(viewport, "clips_video_container", "clips_media_component",
                     "clips_single_media_component")) return InstagramScreen.REELS

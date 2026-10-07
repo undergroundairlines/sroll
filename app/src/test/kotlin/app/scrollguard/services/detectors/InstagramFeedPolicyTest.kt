@@ -260,6 +260,25 @@ class InstagramFeedPolicyTest {
         assertEquals(InstagramScreen.MESSAGES, screen(*nodes.toTypedArray()))
     }
 
+    @Test fun sharedPostFeedMarkersInsideMessageHistoryAreNotTheHomeScreen() {
+        val nodes = conversationNodes() + node("feed_recycler_view", viewport, parent = 2) +
+            node("row_feed_profile_header", parent = 4)
+        assertEquals(InstagramScreen.MESSAGES, screen(*nodes.toTypedArray()))
+    }
+
+    @Test fun aMissingChildOfAPageWideThreadOrInboxCannotHideAFeed() {
+        for (id in listOf("direct_thread", "direct_inbox")) {
+            val tree = AccessibilityTreeSnapshot(listOf(node("root", viewport), node(id, viewport, parent = 0)),
+                true, incompleteParents = setOf(1))
+            assertEquals(InstagramScreen.UNKNOWN, InstagramFeedPolicy.evaluate(InstagramProtectionMode.FEED_LOCK, tree, viewport))
+        }
+    }
+
+    @Test fun anExplicitReelPagerIsNotATextMessagePreviewEvenUnderMessageHistory() {
+        val nodes = conversationNodes() + node("clips_viewer_view_pager", viewport, parent = 2)
+        assertEquals(InstagramScreen.REELS, screen(*nodes.toTypedArray()))
+    }
+
     @Test fun externalReelViewerWinsEvenWhenSomeMessageRowsAreUnavailable() {
         val nodes = conversationNodes() + node("clips_viewer_view_pager", viewport, parent = 0)
         val tree = AccessibilityTreeSnapshot(nodes, true, incompleteParents = setOf(2))

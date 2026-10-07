@@ -56,10 +56,11 @@ stronger fallback. Unknown screen identities remain locked in every mode.
 
 In 0.4.2, message scrolling does not require every message descendant to remain available.
 The current history and editable composer must still identify the same chat, but missing/unread
-children confined to that history (or an exact inbox/thread container) do not attach the shield.
+children confined to that history (or the specific inbox list) do not attach the shield.
 Gaps at the page/root or disappearance of the current chat anchors still restore protection.
-Reel previews inside verified message history are message content; separate Reel browsing viewers
-remain protected. There is no timer that blindly leaves a previous safe screen unlocked.
+Reel and shared-post previews inside verified message history are message content; explicit Reel
+browsing viewers remain protected even if nested under history. There is no timer that blindly
+leaves a previous safe screen unlocked.
 
 Stories take priority over retained background Home nodes when a current large Story viewer and
 its controls or sibling drawing order identify the foreground surface. Story media, including a
