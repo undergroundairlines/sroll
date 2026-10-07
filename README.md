@@ -17,7 +17,7 @@ privacy configuration, visual theme, application identity, and TikTok support ha
 - Conversations also accept connected message-history and editable-composer structure, including with the keyboard open
 - Optional **Allow posts and shared Reels** mode: recognised ordinary Home posts stay usable; known embedded Reels and Explore stay locked
 - Shared viewers reached directly from a confirmed conversation can play behind a transparent touch shield; swiping onward and Instagram taps remain blocked
-- Lock-screen buttons open native messages and the user's profile without temporarily unlocking Home
+- Lock-screen buttons open native messages, a Story or the user's profile without temporarily unlocking Home
 - Unknown/missing screen identities stay blocked; a missing message row does not invalidate an otherwise confirmed chat
 - Optional whole-Instagram block, with a package-level Home action and no UI allowlist
 - If the touch shield cannot attach, the service leaves Instagram instead of allowing the feed
@@ -65,7 +65,11 @@ leaves a previous safe screen unlocked.
 Stories take priority over retained background Home nodes when a current large Story viewer and
 its controls or sibling drawing order identify the foreground surface. Story media, including a
 reshared Reel, does not trigger feed blocking. Cached Story content known to be behind Home cannot
-unlock Home. Whole-Instagram mode intentionally has no exceptions. These resource interpretations
+unlock Home. **Open Stories** on the lock clicks an accessible native Story avatar; it stays
+protected until a Story destination is confirmed. The button is available only when Instagram
+exposes a small top-row Story avatar with an English Story navigation label; it does not infer a
+destination from usernames or unlock Home when navigation is unavailable. Whole-Instagram mode
+intentionally has no exceptions. These resource interpretations
 remain private-interface compatibility assumptions, so a phone report is still needed for an
 unrecognised Instagram variant.
 

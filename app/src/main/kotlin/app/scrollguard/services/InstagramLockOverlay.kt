@@ -20,7 +20,7 @@ import app.scrollguard.R
 import app.scrollguard.models.MediaBounds
 import timber.log.Timber
 
-internal enum class InstagramDestination { MESSAGES, PROFILE }
+internal enum class InstagramDestination { MESSAGES, PROFILE, STORIES }
 internal data class InstagramLockPanel(
     val bounds: MediaBounds,
     val wholeApp: Boolean,
@@ -30,6 +30,7 @@ internal data class InstagramLockPanel(
     val socialMode: Boolean = false,
     val canWatchShared: Boolean = false,
     val keyboardBounds: MediaBounds? = null,
+    val canOpenStories: Boolean = false,
 )
 
 /** A touchable full-window shield. No touches or swipes pass through to the feed. */
@@ -47,6 +48,7 @@ internal class InstagramLockOverlay(
     private var explanation: TextView? = null
     private var messages: Button? = null
     private var profile: Button? = null
+    private var stories: Button? = null
     private var watchShared: Button? = null
     private var attachRequestedAt = 0L
     private val extraShields = mutableListOf<View>()
@@ -147,6 +149,7 @@ internal class InstagramLockOverlay(
         explanation = null
         messages = null
         profile = null
+        stories = null
         watchShared = null
         status = if (removed && extraShields.isEmpty()) "Removed" else "Removal failed; hidden; retry pending"
     }
@@ -173,14 +176,17 @@ internal class InstagramLockOverlay(
             "You chose to block the whole app. Your time is yours."
         } else {
             if (panel.socialMode) "This Reel or Explore screen is locked.\nMessages, Stories and recognised posts stay usable."
-            else "The entire Home feed, Reels and Explore are locked, including ordinary posts.\nOpen messages or your profile."
+            else "The entire Home feed, Reels and Explore are locked, including ordinary posts.\nOpen messages, Stories or your profile."
         }
         messages?.visibility = if (panel.wholeApp) View.GONE else View.VISIBLE
         profile?.visibility = if (panel.wholeApp) View.GONE else View.VISIBLE
+        stories?.visibility = if (panel.wholeApp) View.GONE else View.VISIBLE
         messages?.isEnabled = panel.canOpenMessages
         profile?.isEnabled = panel.canOpenProfile
+        stories?.isEnabled = panel.canOpenStories
         messages?.alpha = if (panel.canOpenMessages) 1f else 0.4f
         profile?.alpha = if (panel.canOpenProfile) 1f else 0.4f
+        stories?.alpha = if (panel.canOpenStories) 1f else 0.4f
         watchShared?.visibility = if (panel.canWatchShared && !panel.wholeApp) View.VISIBLE else View.GONE
     }
 
@@ -230,7 +236,7 @@ internal class InstagramLockOverlay(
         val content = LinearLayout(context).apply {
             orientation = LinearLayout.VERTICAL
             gravity = Gravity.CENTER
-            setPadding(dp(28), dp(64), dp(28), dp(64))
+            setPadding(dp(28), dp(32), dp(28), dp(32))
         }
         fun label(value: String, size: Float, color: Int) = TextView(context).apply {
             text = value
@@ -267,6 +273,7 @@ internal class InstagramLockOverlay(
         }
         messages = button("Open messages", R.id.guard_messages, true) { onNavigate(InstagramDestination.MESSAGES) }
         profile = button("Open my profile", R.id.guard_profile, false) { onNavigate(InstagramDestination.PROFILE) }
+        stories = button("Open Stories", R.id.guard_stories, false) { onNavigate(InstagramDestination.STORIES) }
         watchShared = button("Watch without scrolling", R.id.guard_watch_shared, false, onWatchShared)
         button("Leave Instagram", R.id.guard_leave, false, onLeave)
         content.addView(label("The feed stays locked until you change protection in Scroll Guard.",

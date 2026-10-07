@@ -69,6 +69,8 @@ class ShortFormContentBlockerService : AccessibilityService() {
     private var navigationRequestedAt = 0L
     private var pendingHomePackage: String? = null
     private val windowPackages = mutableMapOf<Int, String>()
+    private val storyNavigationLabel = Regex("\\bstor(y|ies)\\b")
+    private val storyCreationLabel = Regex("\\b(add|create)\\b|^your story\\b")
     private var lastProtectionCheckAt = -10_000L
     private var eventCheckQueued = false
     private val eventCheck: Runnable = Runnable {
@@ -273,7 +275,8 @@ class ShortFormContentBlockerService : AccessibilityService() {
         val now = SystemClock.uptimeMillis()
         pendingDestination?.let { destination ->
             val confirmed = (destination == InstagramDestination.MESSAGES && screen == InstagramScreen.MESSAGES) ||
-                (destination == InstagramDestination.PROFILE && screen == InstagramScreen.PROFILE)
+                (destination == InstagramDestination.PROFILE && screen == InstagramScreen.PROFILE) ||
+                (destination == InstagramDestination.STORIES && screen == InstagramScreen.STORY)
             if (confirmed || now - navigationRequestedAt > 3000L) {
                 ProtectionRuntime.action("Navigate $destination: ${if (confirmed) "destination confirmed in current window" else "destination not confirmed; protection retained"}")
                 if (!confirmed) shield.navigationFailed()
@@ -309,7 +312,8 @@ class ShortFormContentBlockerService : AccessibilityService() {
             val attached = shield.show(InstagramLockPanel(foreground.bounds, instagramMode == InstagramProtectionMode.APP_LOCK,
                 root != null && findNavigation(root, InstagramDestination.MESSAGES) != null,
                 root != null && findNavigation(root, InstagramDestination.PROFILE) != null,
-                watchingSharedReel, instagramMode == InstagramProtectionMode.SOCIAL, canWatchShared, foreground.keyboardBounds))
+                watchingSharedReel, instagramMode == InstagramProtectionMode.SOCIAL, canWatchShared, foreground.keyboardBounds,
+                canOpenStories = root != null && findNavigation(root, InstagramDestination.STORIES) != null))
             DetectionDiagnostics.reportActionStatus(result.packageName, BlockAction.LOCK_FEED,
                 if (!attached) DetectionActionStatus.FAILED else if (shield.isAttached) DetectionActionStatus.TOUCH_BLOCKED else DetectionActionStatus.READY)
             if (attached && shield.isAttached && !recordedLockEpisode && !watchingSharedReel) { blockStats.record(); recordedLockEpisode = true }
@@ -396,15 +400,25 @@ class ShortFormContentBlockerService : AccessibilityService() {
         val ids = when (destination) {
             InstagramDestination.MESSAGES -> setOf("direct_tab", "action_bar_inbox_button", "action_bar_direct_button", "inbox_button", "messenger_button")
             InstagramDestination.PROFILE -> setOf("profile_tab", "profile_tab_icon_view")
+            InstagramDestination.STORIES -> emptySet()
         }
         val labels = if (destination == InstagramDestination.MESSAGES) setOf("messages", "direct", "messenger") else setOf("profile", "your profile")
+        val viewport = safeDisplayBounds()
         val queue = ArrayDeque<AccessibilityNodeInfo>().apply { add(root) }
         var visited = 0
         while (queue.isNotEmpty() && visited++ < 1200) {
             val node = queue.removeFirst()
             val id = node.viewIdResourceName.orEmpty().substringAfterLast('/')
             val label = node.contentDescription?.toString()?.lowercase(Locale.ROOT).orEmpty()
-            if (node.isVisibleToUser && (id in ids || label in labels)) {
+            // A top-row Story avatar is a navigation hint only; a successful click never grants access.
+            val storyAvatar = if (destination == InstagramDestination.STORIES) {
+                val area = Rect().also(node::getBoundsInScreen)
+                storyNavigationLabel.containsMatchIn(label) &&
+                    !storyCreationLabel.containsMatchIn(label) &&
+                    area.width() in 16..(viewport.width / 2) && area.height() in 16..(viewport.height / 4) &&
+                    area.top >= viewport.top && area.bottom <= viewport.top + viewport.height * 0.35f
+            } else false
+            if (node.isVisibleToUser && (storyAvatar || (destination != InstagramDestination.STORIES && (id in ids || label in labels)))) {
                 var candidate: AccessibilityNodeInfo? = node
                 repeat(4) {
                     val current = candidate

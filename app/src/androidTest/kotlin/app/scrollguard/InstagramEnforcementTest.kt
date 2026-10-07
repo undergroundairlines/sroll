@@ -454,6 +454,23 @@ class InstagramEnforcementTest {
         awaitLock()
     }
 
+    @Test fun openingStoriesThroughFeedLockWaitsForConfirmedNativeStory() {
+        open("home")
+        awaitLock()
+        val stories = requireNotNull(device.wait(Until.findObject(By.res("app.scrollguard", "guard_stories")), 8_000L))
+        assertTrue("Native top-row Story avatar must make the shield route available", stories.isEnabled)
+        stories.click()
+        assertTrue(device.wait(Until.hasObject(By.text("Fixture story")), 8_000L))
+        assertUnlocked()
+        awaitCondition { ProtectionRuntime.state.value.screen == "Story allowed" }
+        device.findObject(By.text("Next Story")).click()
+        assertTrue(device.wait(Until.hasObject(By.text("Story: 2")), 8_000L))
+        device.findObject(By.res("com.instagram.android", "feed_tab")).click()
+        awaitLock()
+        repeatFeedTouches()
+        assertEquals("Scroll: 0; clicks: 0", fixtureStatus())
+    }
+
     @Test fun leavingInstagramRemovesShieldFromLauncher() {
         open("home")
         awaitLock()

@@ -11,6 +11,7 @@ import android.view.accessibility.AccessibilityEvent
 import android.widget.Button
 import android.widget.EditText
 import android.widget.FrameLayout
+import android.widget.ImageButton
 import android.widget.LinearLayout
 import android.widget.ScrollView
 import android.widget.TextView
@@ -164,6 +165,10 @@ class MainActivity : Activity() {
             "story" -> {
                 body.id = R.id.reel_viewer
                 body.addView(label("Fixture story"))
+                var story = 1
+                val progress = label("Story: 1", R.id.fixture_story_progress)
+                body.addView(progress)
+                action("Next Story") { progress.text = "Story: ${++story}" }
             }
             "story_retained_home" -> {
                 val pages = FrameLayout(this)
@@ -204,6 +209,13 @@ class MainActivity : Activity() {
                     media = true, ordinaryHome = false)
             }
             else -> {
+                if (screen == "home" || screen == "home_reel") {
+                    body.addView(ImageButton(this).apply {
+                        contentDescription = "Friend's story"
+                        setImageResource(android.R.drawable.ic_menu_myplaces)
+                        setOnClickListener { render("story") }
+                    }, LinearLayout.LayoutParams(64, 64))
+                }
                 val status = label("Scroll: 0; clicks: 0", R.id.fixture_status)
                 if (screen == "explore") body.id = R.id.explore_grid
                 if (screen == "cached_profile") body.addView(label("Cached header", R.id.row_profile_header_imageview_frame_layout))
