@@ -189,6 +189,14 @@ class MainActivity : Activity() {
         root.addView(nav)
         if (screen == "empty_tree") root.importantForAccessibility = View.IMPORTANT_FOR_ACCESSIBILITY_NO_HIDE_DESCENDANTS
         setContentView(root)
+        if (screen == "event_storm") {
+            // Sustained callbacks must not occupy the service's main Looper ahead of layout.
+            repeat(120) { index ->
+                handler.postDelayed({
+                    if (currentScreen == screen) root.sendAccessibilityEvent(AccessibilityEvent.TYPE_WINDOW_STATE_CHANGED)
+                }, index * 35L)
+            }
+        }
     }
 
     private fun addFeed(body: LinearLayout, status: TextView, media: Boolean, ordinaryHome: Boolean) {

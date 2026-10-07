@@ -69,11 +69,27 @@ class ShortFormContentBlockerService : AccessibilityService() {
     private var navigationRequestedAt = 0L
     private var pendingHomePackage: String? = null
     private val windowPackages = mutableMapOf<Int, String>()
+    private var lastProtectionCheckAt = -10_000L
+    private var eventCheckQueued = false
+    private val eventCheck: Runnable = Runnable {
+        eventCheckQueued = false
+        watchdog.run()
+    }
+
+    private fun requestProtectionCheck() {
+        if (eventCheckQueued) return
+        eventCheckQueued = true
+        // Yield to window layout and coalesce bursts. This is not a trailing debounce:
+        // new events cannot postpone an already queued check indefinitely.
+        handler.postDelayed(eventCheck, (80L - (SystemClock.uptimeMillis() - lastProtectionCheckAt)).coerceAtLeast(0L))
+    }
 
     // Events can be missing. Poll even outside Instagram and while the IME/system UI is active.
-    private val watchdog = object : Runnable {
+    private val watchdog: Runnable = object : Runnable {
         override fun run() {
             handler.removeCallbacks(this)
+            handler.removeCallbacks(eventCheck)
+            eventCheckQueued = false
             runCatching { enforceInstagram() }.onFailure {
                 Timber.e(it, "Protection check failed")
                 shield.hide()
@@ -81,6 +97,7 @@ class ShortFormContentBlockerService : AccessibilityService() {
                 if (runCatching { foregroundApplication()?.packageName }.getOrNull() == PackageConstants.INSTAGRAM_PACKAGE)
                     exitBlockedApp(PackageConstants.INSTAGRAM_PACKAGE, "Protection check failed")
             }
+            lastProtectionCheckAt = SystemClock.uptimeMillis()
             handler.postDelayed(this, 300L)
         }
     }
@@ -136,7 +153,15 @@ class ShortFormContentBlockerService : AccessibilityService() {
             val matches = runCatching { windows.any { it.id == event.windowId && it.type == AccessibilityWindowInfo.TYPE_APPLICATION } }.getOrDefault(false)
             if (matches) windowPackages[event.windowId] = packageName
         }
-        watchdog.run()
+        if (event.eventType == AccessibilityEvent.TYPE_WINDOW_STATE_CHANGED ||
+            event.eventType == AccessibilityEvent.TYPE_WINDOWS_CHANGED) {
+            // Remove shields promptly on confirmed exits without traversing a content tree.
+            runCatching { foregroundApplication() }.getOrNull()?.let { current ->
+                if (current.packageName != null &&
+                    (current.packageName != PackageConstants.INSTAGRAM_PACKAGE || current.systemControls)) clearInstagram()
+            }
+        }
+        requestProtectionCheck()
         if (packageName == PackageConstants.TIKTOK_PACKAGE && packageName in enabledPackages) {
             if (foregroundApplication()?.packageName == packageName) exitBlockedApp(packageName, "TikTok blocked completely")
         } else if (packageName == PackageConstants.YOUTUBE_PACKAGE && packageName in enabledPackages) {

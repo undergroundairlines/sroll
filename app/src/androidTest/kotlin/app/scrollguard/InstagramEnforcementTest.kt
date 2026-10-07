@@ -209,6 +209,14 @@ class InstagramEnforcementTest {
         assertEquals("Scroll: 0; clicks: 0", fixtureStatus())
     }
 
+    @Test fun windowEventBurstsStillAttachTouchableShield() {
+        open("event_storm")
+        awaitLock()
+        repeatFeedTouches()
+        assertEquals("Scroll: 0; clicks: 0", fixtureStatus())
+        awaitLock()
+    }
+
     @Test fun acceptedNavigationClickDoesNotUncoverUnchangedScreen() {
         open("navigation_noop")
         awaitLock()

@@ -71,8 +71,9 @@ internal class InstagramLockOverlay(
         }
         if (view != null && lastPanel == panel) {
             if (!isAttached && SystemClock.uptimeMillis() - attachRequestedAt > 3000L) {
+                val pending = view?.let { "attached=${it.isAttachedToWindow}, shown=${it.isShown}, size=${it.width}x${it.height}" }
                 hide()
-                status = "Attachment/layout failed; leaving Instagram"
+                status = "Attachment/layout failed ($pending); leaving Instagram"
                 return false
             }
             status = if (isAttached) "Attached; touchable" else "Attachment/layout pending"

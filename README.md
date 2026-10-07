@@ -138,6 +138,9 @@ Classification uses application content coordinates independently of keyboard cu
 leave its focused chat composer behind the IME while continuing to accept typing. Shield rectangles
 cover every app region outside a docked or floating keyboard, with system bars excluded. Cold-start
 shield content is built after the minimal touch-catching window has completed its first layout.
+Event bursts are coalesced into one queued check so content traversal cannot repeatedly occupy
+the same main Looper ahead of shield layout. The independent watchdog still checks every 300 ms;
+confirmed window exits remove the shield without a content traversal.
 The window/focus APIs are Android contracts; the separate content and keyboard coordinates were
 observed in the synthetic Android 15 regression. All Instagram resource-name interpretations are compatibility
 assumptions, checked conservatively and exposed in diagnostics.
