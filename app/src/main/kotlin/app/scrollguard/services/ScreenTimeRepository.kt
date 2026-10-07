@@ -222,7 +222,7 @@ class ScreenTimeRepository(private val context: Context) {
             while (repairDay < todayStart) {
                 if (archive.hasDay(repairDay)) {
                     val corrected = filtered(reader.read(repairDay, addDays(repairDay, 1)))
-                    if (corrected.hasObservedUsage()) {
+                    if (corrected.historyComplete && corrected.hasObservedUsage()) {
                         archive.replaceDay(repairDay, corrected)
                     }
                 }
@@ -249,7 +249,7 @@ class ScreenTimeRepository(private val context: Context) {
         var fullDaysComplete = true
         var checkedDay = archiveStart
         while (checkedDay < archiveEnd) {
-            if (!archive.hasDay(checkedDay)) fullDaysComplete = false
+            if (!archive.hasCompleteDay(checkedDay)) fullDaysComplete = false
             checkedDay = addDays(checkedDay, 1)
         }
         partials.forEach { partial ->

@@ -49,6 +49,9 @@ class InstagramEnforcementTest {
             }
         }
         device.wakeUp()
+        // CI fixture has no credential. Reset an insecure keyguard left by a failed
+        // sleep/wake case so one failure cannot invalidate the rest of the suite.
+        device.executeShellCommand("wm dismiss-keyguard")
         device.pressHome()
         runBlocking {
             preferences.cancelStrictModeUnlock()
@@ -112,7 +115,15 @@ class InstagramEnforcementTest {
         repeat(8) {
             device.swipe(device.displayWidth / 2, device.displayHeight * 4 / 5,
                 device.displayWidth / 2, device.displayHeight / 5, 15)
-            device.click(device.displayWidth / 3, device.displayHeight / 5)
+            // Landscape can scroll the shield's own controls into this position.
+            // Avoid invoking purpose buttons while measuring underlying feed taps.
+            if (device.displayHeight > device.displayWidth) {
+                val x = device.displayWidth / 3
+                val y = device.displayHeight / 5
+                val overControl = device.findObjects(By.pkg("app.scrollguard").clazz("android.widget.Button"))
+                    .any { it.visibleBounds.contains(x, y) }
+                if (!overControl) device.click(x, y)
+            }
             device.click(1, device.displayHeight / 5)
             device.click(device.displayWidth - 2, device.displayHeight / 5)
         }

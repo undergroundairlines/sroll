@@ -55,6 +55,10 @@ internal class InstagramLockOverlay(
 
     fun show(panel: InstagramLockPanel): Boolean {
         if (panel.bounds.width <= 0 || panel.bounds.height <= 0) return false
+        if (view?.visibility == View.GONE) {
+            hide()
+            if (view != null) return false
+        }
         if (view != null && lastPanel?.sharedReel != panel.sharedReel) hide()
         if (view != null && lastPanel == panel) {
             if (!isAttached && SystemClock.uptimeMillis() - attachRequestedAt > 1000L) {

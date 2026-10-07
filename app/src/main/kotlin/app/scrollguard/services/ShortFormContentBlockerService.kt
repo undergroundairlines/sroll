@@ -64,6 +64,9 @@ class ShortFormContentBlockerService : AccessibilityService() {
     private var conversationCheckedAt = -10_000L
     private var conversationWindow = -1
     private var canWatchShared = false
+    private var pendingDestination: InstagramDestination? = null
+    private var navigationRequestedAt = 0L
+    private var pendingHomePackage: String? = null
     private val windowPackages = mutableMapOf<Int, String>()
 
     // Events can be missing. Poll even outside Instagram and while the IME/system UI is active.
@@ -206,6 +209,13 @@ class ShortFormContentBlockerService : AccessibilityService() {
         val foreground = foregroundApplication()
         val phoneLocked = (getSystemService(KEYGUARD_SERVICE) as KeyguardManager).isKeyguardLocked ||
             !(getSystemService(POWER_SERVICE) as PowerManager).isInteractive
+        pendingHomePackage?.let { blockedPackage ->
+            if (foreground?.packageName != null && foreground.packageName != blockedPackage && !foreground.systemControls && !phoneLocked) {
+                ProtectionRuntime.action("Confirmed $blockedPackage is no longer foreground after HOME request")
+                if (!recordedLockEpisode) blockStats.record()
+                pendingHomePackage = null
+            }
+        }
         if (!preferencesApplied || PackageConstants.INSTAGRAM_PACKAGE !in enabledPackages || phoneLocked ||
             foreground?.packageName != PackageConstants.INSTAGRAM_PACKAGE || foreground.systemControls) {
             clearInstagram()
@@ -226,6 +236,15 @@ class ShortFormContentBlockerService : AccessibilityService() {
         val tree = foreground.root?.let { runCatching { AccessibilityTreeSnapshot.from(it, includeLabels = false) }.getOrNull() }
         val screen = InstagramFeedPolicy.evaluate(instagramMode, tree, foreground.bounds)
         val now = SystemClock.uptimeMillis()
+        pendingDestination?.let { destination ->
+            val confirmed = (destination == InstagramDestination.MESSAGES && screen == InstagramScreen.MESSAGES) ||
+                (destination == InstagramDestination.PROFILE && screen == InstagramScreen.PROFILE)
+            if (confirmed || now - navigationRequestedAt > 3000L) {
+                ProtectionRuntime.action("Navigate $destination: ${if (confirmed) "destination confirmed in current window" else "destination not confirmed; protection retained"}")
+                if (!confirmed) shield.navigationFailed()
+                pendingDestination = null
+            }
+        }
         if (screen == InstagramScreen.REELS && lastScreen == InstagramScreen.MESSAGES && wasConversation &&
             conversationWindow == foreground.windowId && now - conversationCheckedAt in 0..1500L &&
             instagramMode == InstagramProtectionMode.SOCIAL) canWatchShared = true
@@ -244,7 +263,8 @@ class ShortFormContentBlockerService : AccessibilityService() {
         lastScreen = screen
         val rootState = when { tree == null -> "Missing"; tree.truncated -> "Incomplete (${tree.nodeCount} nodes)"; else -> "Complete (${tree.nodeCount} nodes)" }
         val result = DetectionResult(PackageConstants.INSTAGRAM_PACKAGE, if (screen.allowed) 0 else 1, 1,
-            listOf(description, "Root $rootState"), tree?.diagnosticIdentifiers().orEmpty(), BlockAction.LOCK_FEED)
+            listOf(description, InstagramFeedPolicy.reason(screen, tree, foreground.bounds), "Root $rootState"),
+            tree?.diagnosticIdentifiers().orEmpty(), BlockAction.LOCK_FEED)
         DetectionDiagnostics.report(result)
         if (screen.allowed) {
             shield.hide()
@@ -263,7 +283,7 @@ class ShortFormContentBlockerService : AccessibilityService() {
         }
         ProtectionRuntime.checked(foreground.packageName, foreground.windowId, rootState, description, shield.status,
             InstagramObservation(System.currentTimeMillis(), foreground.windowId, foreground.bounds.toString(), rootState,
-                description, tree?.structuralReport().orEmpty()))
+                "$description; ${InstagramFeedPolicy.reason(screen, tree, foreground.bounds)}", tree?.structuralReport().orEmpty()))
     }
 
     private fun clearInstagram() {
@@ -274,6 +294,7 @@ class ShortFormContentBlockerService : AccessibilityService() {
         conversationWindow = -1
         sharedReelClickAt = -10_000L
         lastScreen = InstagramScreen.UNKNOWN
+        pendingDestination = null
         shield.hide()
     }
     private fun exitBlockedApp(packageName: String, reason: String) {
@@ -281,12 +302,12 @@ class ShortFormContentBlockerService : AccessibilityService() {
         if (now - lastHomeActionAt < 500L) return
         lastHomeActionAt = now
         val accepted = performGlobalAction(GLOBAL_ACTION_HOME)
+        if (accepted) pendingHomePackage = packageName
         ProtectionRuntime.action("HOME requested for $packageName: accepted=$accepted; $reason; destination awaits confirmation")
         val result = DetectionResult(packageName, 1, 1, listOf(reason), action = BlockAction.HOME)
         DetectionDiagnostics.report(result)
         DetectionDiagnostics.reportActionStatus(packageName, BlockAction.HOME,
             if (accepted) DetectionActionStatus.PERFORMED else DetectionActionStatus.FAILED)
-        if (accepted && !recordedLockEpisode) { blockStats.record(); recordedLockEpisode = true }
     }
     private fun leaveInstagram() {
         exitBlockedApp(PackageConstants.INSTAGRAM_PACKAGE, "Left the locked feed")
@@ -318,6 +339,7 @@ class ShortFormContentBlockerService : AccessibilityService() {
         val target = findNavigation(root, destination)
         val accepted = target?.let { runCatching { it.performAction(AccessibilityNodeInfo.ACTION_CLICK) }.getOrDefault(false) } ?: false
         ProtectionRuntime.action("Navigate $destination: click accepted=$accepted; destination awaits confirmation")
+        if (accepted) { pendingDestination = destination; navigationRequestedAt = SystemClock.uptimeMillis() }
         if (!accepted) shield.navigationFailed()
         handler.postDelayed(watchdog, 100L)
     }

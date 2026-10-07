@@ -18,6 +18,23 @@ internal enum class InstagramScreen(val description: String, val allowed: Boolea
 
 /** An allowlist, not a Reel score: missing or conflicting evidence cannot open the feed. */
 internal object InstagramFeedPolicy {
+    fun reason(screen: InstagramScreen, tree: AccessibilityTreeSnapshot?, viewport: MediaBounds): String = when (screen) {
+        InstagramScreen.MESSAGES -> if (tree?.hasConversation(viewport) == true)
+            "Visible message history and editable composer in one content subtree"
+            else "Large visible exact inbox/thread container"
+        InstagramScreen.PROFILE -> "Visible profile header and separate profile details"
+        InstagramScreen.STORY -> "Large visible Story viewer"
+        InstagramScreen.HOME -> "Home content or selected Home navigation; entire Home is locked"
+        InstagramScreen.HOME_POSTS -> "Large visible Home container; no recognised on-screen Reel media (best effort)"
+        InstagramScreen.REELS -> "Visible Reel viewer or recognised Home Reel media"
+        InstagramScreen.EXPLORE -> "Visible Explore content or selected Explore navigation"
+        InstagramScreen.APP_LOCK -> "Whole-app preference; no interface exceptions"
+        InstagramScreen.UNKNOWN -> when {
+            tree == null -> "No root snapshot in the confirmed Instagram window"
+            tree.truncated -> "Incomplete tree cannot grant access"
+            else -> "No supported positive safe-screen structure"
+        }
+    }
     fun evaluate(
         mode: InstagramProtectionMode,
         tree: AccessibilityTreeSnapshot?,

@@ -59,6 +59,20 @@ jobs:
         id: build-apk
         run: gradle test lint assembleDebug --stacktrace
 
+      - name: Record unit test totals
+        if: always()
+        run: |
+          mkdir -p app/build/reports/delivery
+          python3 - <<'PY' | tee app/build/reports/delivery/unit-tests.txt
+          import glob, xml.etree.ElementTree as ET
+          totals = dict(tests=0, failures=0, errors=0, skipped=0)
+          for path in glob.glob('app/build/test-results/testDebugUnitTest/TEST-*.xml'):
+              root = ET.parse(path).getroot()
+              for key in totals:
+                  totals[key] += int(root.get(key, 0))
+          print('Unit tests:', ', '.join(f'{key}={value}' for key,value in totals.items()))
+          PY
+
       - name: Verify APK identity after build
         run: bash scripts/verify-delivery-apk.sh app/build/outputs/apk/debug/app-debug.apk after-build
 
@@ -86,6 +100,7 @@ jobs:
           name: scroll-guard-verification
           path: |
             app/build/reports/
+            app/build/test-results/
             app/build/outputs/androidTest-results/
           if-no-files-found: warn
           retention-days: 14

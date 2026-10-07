@@ -19,10 +19,25 @@ if [[ -z "$sdk" || ! -d "$sdk/build-tools" ]]; then
     exit 1
 fi
 build_tools="$(find "$sdk/build-tools" -mindepth 1 -maxdepth 1 -type d | sort -V | tail -n 1)"
-certificates="$("$build_tools/apksigner" verify --verbose --print-certs "$apk")"
-certificate="$(printf '%s\n' "$certificates" | sed -n 's/^Signer #1 certificate SHA-256 digest: //p' | tr '[:upper:]' '[:lower:]')"
-signer_count="$(printf '%s\n' "$certificates" | sed -n 's/^Number of signers: //p')"
+report_directory="app/build/reports/delivery"
+mkdir -p "$report_directory"
+if ! certificates="$("$build_tools/apksigner" verify --verbose --print-certs "$apk" 2>&1)"; then
+    printf '%s\n' "$certificates" | tee "$report_directory/$stage-apksigner.txt"
+    echo "::error::The final APK signature does not verify."
+    exit 1
+fi
+# These are public certificates and signature metadata; no private signing material.
+printf '%s\n' "$certificates" > "$report_directory/$stage-apksigner.txt"
+# Count actual signer certificate digests rather than depending on a summary line
+# whose wording is not part of apksigner's CLI contract. Reject zero/multiple signers.
+signer_digests="$(printf '%s\n' "$certificates" | tr -d '\r' |
+    sed -n -E 's/^Signer #[0-9]+ certificate SHA-256 digest: ([0-9A-Fa-f]+)[[:space:]]*$/\1/p' |
+    tr '[:upper:]' '[:lower:]')"
+signer_count="$(printf '%s\n' "$signer_digests" | awk 'NF { count++ } END { print count+0 }')"
+certificate="$signer_digests"
 if [[ "$certificate" != "$expected_certificate" || "$signer_count" != "1" ]]; then
+    printf '%s\n' "$certificates"
+    echo "Parsed signer certificate count: $signer_count; expected certificate SHA-256: $expected_certificate"
     echo "::error::APK signing certificate does not match installed Scroll Guard 0.4.0. Refusing an incompatible update."
     exit 1
 fi
@@ -38,8 +53,6 @@ if [[ "$package" != "$expected_package" || "$version_code" != "$expected_version
 fi
 
 apk_sha256="$(sha256sum "$apk" | cut -d ' ' -f 1)"
-report_directory="app/build/reports/delivery"
-mkdir -p "$report_directory"
 cat > "$report_directory/$stage.txt" <<EOF
 Stage: $stage
 Package: $package
