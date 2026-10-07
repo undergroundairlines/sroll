@@ -4,4 +4,6 @@
     <item name="guard_messages" type="id" />
     <item name="guard_profile" type="id" />
     <item name="guard_leave" type="id" />
+    <item name="guard_shared_back" type="id" />
+    <item name="guard_watch_shared" type="id" />
 </resources>

@@ -65,6 +65,23 @@ class ScreenTimeArchive(context: Context) :
         }
     }
 
+    /** Empty backfill rows from older releases are not evidence of available history. */
+    fun earliestRecordedDay(): Long? {
+        readableDatabase.rawQuery(
+            """
+            SELECT MIN(day_start) FROM (
+                SELECT day_start FROM app_daily WHERE foreground_ms > 0
+                UNION
+                SELECT day_start FROM day_summary WHERE screen_on_ms > 0 OR pickups > 0
+            )
+            """.trimIndent(),
+            null,
+        ).use { cursor ->
+            if (!cursor.moveToFirst() || cursor.isNull(0)) return null
+            return cursor.getLong(0)
+        }
+    }
+
     fun deleteDay(dayStart: Long) {
         writableDatabase.beginTransaction()
         try {

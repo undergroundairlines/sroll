@@ -17,6 +17,9 @@
 package app.scrollguard.ui.screens
 
 import android.content.Intent
+import android.content.ClipData
+import android.content.ClipboardManager
+import android.content.Context
 import android.net.Uri
 import androidx.compose.animation.AnimatedVisibility
 import androidx.compose.animation.fadeIn
@@ -79,6 +82,7 @@ import app.scrollguard.models.DetectionActionStatus
 import app.scrollguard.models.TrackedPackage
 import app.scrollguard.models.InstagramProtectionMode
 import app.scrollguard.services.ProtectionRuntimeState
+import app.scrollguard.services.ProtectionRuntime
 import app.scrollguard.models.VideoCoverStatus
 import app.scrollguard.services.BlockStats
 import app.scrollguard.ui.components.AppSection
@@ -399,6 +403,8 @@ private fun ServiceActiveContent(
                 diagnostics = diagnostics,
                 onClear = onClearDiagnostics,
             )
+            Spacer(modifier = Modifier.height(16.dp))
+            ProtectionDiagnosticsSection(runtime)
 
             Spacer(modifier = Modifier.height(16.dp))
 
@@ -460,6 +466,23 @@ private fun InstagramProtectionSection(
             HorizontalDivider(color = MaterialTheme.colorScheme.outlineVariant)
             Row(verticalAlignment = Alignment.CenterVertically) {
                 Column(modifier = Modifier.weight(1f)) {
+                    Text("Allow posts and shared Reels", style = MaterialTheme.typography.titleMedium, fontWeight = FontWeight.Bold)
+                    Text("Weaker, best effort: ordinary Home posts, messages, profiles and Stories. " +
+                        "Recognised Reels and Explore are locked. A recognised shared Reel can play with scrolling and taps shielded. " +
+                        "Instagram can hide Reel IDs, so this mode cannot guarantee blocking every embedded Reel or identify friends versus recommendations.",
+                        style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
+                }
+                Spacer(modifier = Modifier.size(12.dp))
+                Switch(checked = mode == InstagramProtectionMode.SOCIAL,
+                    onCheckedChange = { onModeChange(if (it) InstagramProtectionMode.SOCIAL else InstagramProtectionMode.FEED_LOCK) })
+            }
+            Text("Current mode: ${when (mode) {
+                InstagramProtectionMode.APP_LOCK -> "Whole Instagram"
+                InstagramProtectionMode.FEED_LOCK -> "Entire Home feed locked (default)"
+                InstagramProtectionMode.SOCIAL -> "Posts and shared Reels (best effort)"
+            }}", style = MaterialTheme.typography.bodySmall)
+            Row(verticalAlignment = Alignment.CenterVertically) {
+                Column(modifier = Modifier.weight(1f)) {
                     Text("Block whole Instagram", style = MaterialTheme.typography.titleMedium, fontWeight = FontWeight.Bold)
                     Text("Strongest option: leave Instagram whenever it opens.",
                         style = MaterialTheme.typography.bodySmall,
@@ -477,7 +500,7 @@ private fun InstagramProtectionSection(
                 Text("Last Instagram check: $lastCheck", style = MaterialTheme.typography.bodySmall,
                     color = MaterialTheme.colorScheme.primary)
             }
-            Text("Strict Mode also delays changing from the whole-app block to feed lock.",
+            Text("Strict Mode delays every change to weaker protection by 30 minutes.",
                 style = MaterialTheme.typography.labelSmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
         }
     }
@@ -529,6 +552,7 @@ private fun StrictModeSection(
                 val targetName = when (pendingTarget) {
                     StrictModePolicy.STRICT_MODE_TARGET -> "Strict Mode"
                     StrictModePolicy.INSTAGRAM_FEED_TARGET -> "Instagram messages and profiles"
+                    StrictModePolicy.INSTAGRAM_SOCIAL_TARGET -> "Instagram posts and shared Reels"
                     else -> {
                     packages.firstOrNull { it.packageName == pendingTarget }?.displayName
                         ?: "Blocker"
@@ -657,10 +681,10 @@ private fun DetectionDiagnosticsSection(
                         DetectionActionStatus.PERFORMED -> if (diagnostic.action == BlockAction.SKIP_REEL) {
                             "Android completed the swipe gesture"
                         } else {
-                            "$actionLabel action completed"
+                            "$actionLabel request accepted; destination requires confirmation"
                         }
                         DetectionActionStatus.FAILED -> "$actionLabel action failed"
-                        DetectionActionStatus.TOUCH_BLOCKED -> "Touch shield attached; feed swipes blocked"
+                        DetectionActionStatus.TOUCH_BLOCKED -> "Touchable shield attached; verify swipes with the phone test"
                     }
                     Text(
                         text = statusLabel,
@@ -706,6 +730,42 @@ private fun DetectionDiagnosticsSection(
                     }
                 }
             }
+        }
+    }
+}
+
+@Composable
+private fun ProtectionDiagnosticsSection(runtime: ProtectionRuntimeState) {
+    val context = LocalContext.current
+    var copied by rememberSaveable { mutableStateOf(false) }
+    fun time(value: Long): String = if (value == 0L) "never" else
+        java.text.DateFormat.getTimeInstance().format(java.util.Date(value))
+    Card(modifier = Modifier.fillMaxWidth(),
+        colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surfaceVariant)) {
+        Column(modifier = Modifier.padding(16.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) {
+            Text("Phone protection check", style = MaterialTheme.typography.titleMedium, fontWeight = FontWeight.Bold)
+            Text("Service: ${if (runtime.connected) "connected" else "disconnected"} · " +
+                "Preferences: ${if (runtime.preferencesApplied) "applied" else "not applied"}", style = MaterialTheme.typography.bodySmall)
+            Text("Instagram: ${if (runtime.instagramEnabled) "on" else "off"} · ${runtime.instagramMode}",
+                style = MaterialTheme.typography.bodySmall)
+            Text("Foreground: ${runtime.foregroundPackage} · window ${runtime.foregroundWindowId}", style = MaterialTheme.typography.bodySmall)
+            Text("Root: ${runtime.rootState}\nScreen: ${runtime.screen}\nShield: ${runtime.overlay}\nChecked: ${time(runtime.checkedAtMillis)}",
+                style = MaterialTheme.typography.bodySmall)
+            Text("Last action: ${runtime.lastAction}\nAt: ${time(runtime.actionAtMillis)}", style = MaterialTheme.typography.bodySmall)
+            runtime.lastInstagram?.let { sample ->
+                Text("Previous Instagram sample (${time(sample.timestampMillis)}): ${sample.screen}. " +
+                    "This is history, not the current enforcement state.", style = MaterialTheme.typography.bodySmall)
+            }
+            Text("A blocking decision and an attached shield are separate. To verify protection, swipe and tap a locked feed repeatedly, " +
+                "then open a conversation and type. Return here and copy the report if either fails.",
+                style = MaterialTheme.typography.bodySmall)
+            TextButton(onClick = {
+                val clipboard = context.getSystemService(Context.CLIPBOARD_SERVICE) as ClipboardManager
+                clipboard.setPrimaryClip(ClipData.newPlainText("Scroll Guard structural diagnostics", ProtectionRuntime.report()))
+                copied = true
+            }) { Text(if (copied) "Report copied · copy again" else "Copy local diagnostic report") }
+            Text("Contains only resource IDs, bounds and structural state; no messages, captions, usernames or keyboard content. " +
+                "Nothing is sent automatically.", style = MaterialTheme.typography.labelSmall)
         }
     }
 }

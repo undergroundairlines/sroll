@@ -14,6 +14,9 @@ privacy configuration, visual theme, application identity, and TikTok support ha
 - Touchable full-window Instagram feed lock: swipes and taps cannot reach the feed behind it
 - Home is locked even when it contains ordinary posts or exposes no Reel identifiers
 - Messages, profiles and Stories allowed only when their visible interface is positively identified
+- Conversations also accept connected message-history and editable-composer structure, including with the keyboard open
+- Optional **Allow posts and shared Reels** mode: recognised ordinary Home posts stay usable; known embedded Reels and Explore stay locked
+- Shared viewers reached directly from a confirmed conversation can play behind a transparent touch shield; swiping onward and Instagram taps remain blocked
 - Lock-screen buttons open native messages and the user's profile without temporarily unlocking Home
 - Unknown, missing and incomplete Instagram interfaces stay blocked
 - Optional whole-Instagram block, with a package-level Home action and no UI allowlist
@@ -22,7 +25,7 @@ privacy configuration, visual theme, application identity, and TikTok support ha
 - Dashboard reports actual service connection and the last Instagram enforcement check
 - Full TikTok blocking with an immediate Home action
 - Per-app switches
-- Optional Strict Mode with a persistent 30-minute delay before any blocker can be disabled
+- Optional Strict Mode with a persistent 30-minute delay before any blocker can be disabled or Instagram protection weakened
 - Exact event-based screen-time dashboard with Day, Week, Month and All Time views
 - Hourly, daily and monthly usage charts that reconcile with the displayed total
 - Per-app detail pages, percentages, screen-on time and pickup counts
@@ -31,7 +34,7 @@ privacy configuration, visual theme, application identity, and TikTok support ha
 - Private daily archive that preserves all-time history after Android prunes old events
 - Small and wide home-screen widgets showing today’s total and percentage change
 - Wide widget includes the top three apps with readable time and percentage values
-- In-app detector diagnostics using only scores and Android resource IDs
+- Current service/preferences, foreground window, complete/missing/incomplete tree, classification, overlay and action diagnostics, with a local copy report
 - No account, advertising, analytics, crash reporting, or network permission
 - No cloud backup of preferences
 - Nothing-inspired monochrome theme with a red status accent
@@ -42,6 +45,23 @@ The app uses an Android Accessibility Service after the user explicitly enables 
 detector scores several interface signals. Instagram uses a strict allowlist instead:
 Home, Reels, Explore and unrecognised screens receive a touchable full-window lock. Only confirmed
 messages, profile or Story content removes it. Whole-app mode and TikTok use package-level blocking.
+The default still locks the **entire Home feed, including ordinary posts**. Stored modes and switches
+are preserved during the update; a weaker mode is never silently selected.
+
+The optional **Allow posts and shared Reels** mode responds to the preference for ordinary posts and
+messaging. It allows a recognised Home container unless visible Reel media is identified. It cannot
+distinguish friends' posts from recommendations, or reliably catch a Reel whose private identifiers
+Instagram omits. It is explicitly labelled **best effort**; use feed lock or whole-app lock for the
+stronger fallback. Unknown and incomplete screens remain locked in every mode.
+
+In this mode a positive shared-media click inside a confirmed conversation can enter the transparent
+viewer shield. If Instagram destroys the clicked accessibility source before its event arrives,
+**Watch without scrolling** is offered only for a viewer observed directly after a confirmed
+conversation in the same window. Choosing it is an explicit viewing request; the shield still consumes
+all underlying touches. Profiles, inbox navigation and later unrelated routes cannot grant that
+request. **Back to messages** requests Android Back and keeps shielding until the destination is
+confirmed. Instagram may autoplay media and audio; this app cannot promise control of that private
+player. Feed lock continues to block shared Reels as well.
 
 The service observes window changes from all apps to remove the shield when the user leaves
 Instagram. It traverses content only in enabled apps. Diagnostic samples live in process memory
@@ -49,16 +69,21 @@ and contain no captions, messages, usernames, or account content.
 
 ## Install a test build
 
-1. Build and install `app-debug.apk`, or install the supplied APK.
+1. Download the supplied `scroll-guard-0.4.1.apk` on the phone and install **over** the existing app.
+   Do not uninstall or clear data. The package is `app.scrollguard`, versionCode **401**.
 2. On recent Android versions, open **App info** for Scroll Guard. If Android blocks the
    accessibility permission for a sideloaded app, open the three-dot menu and choose
    **Allow restricted settings**.
 3. Open Scroll Guard, read the disclosure, and enable its accessibility service.
 4. Enable YouTube, Instagram, or TikTok from the app.
+5. Confirm **Phone protection check** says service connected and preferences applied. If Nothing OS
+   stops the service, reopen Android Accessibility settings and re-enable Scroll Guard. Check the
+   phone's app battery/background settings if service disconnections recur; this is a device-specific
+   diagnostic step, not a claim that battery settings caused the reported conversation failure.
 
 ## Detector test
 
-1. Clear the **Detector check** panel.
+1. Start with Instagram on and **Allow posts and shared Reels** off. Check **Phone protection check**.
 2. Open Instagram Home. A "Your feed is locked" screen should appear. Repeated swipes must not
    move the feed. This intentionally blocks ordinary Home posts too.
 3. Use **Open messages** or **Open my profile** on the lock. A recognised destination should open.
@@ -68,6 +93,16 @@ and contain no captions, messages, usernames, or account content.
 5. Enable **Block whole Instagram** to block every Instagram screen, including messages and profiles.
 6. In Strict Mode, switching back to feed lock or disabling a blocker waits 30 minutes.
 7. Verify normal YouTube videos are usable and Shorts navigate Back; TikTok should navigate Home.
+8. Open messages, then an individual conversation. Open the keyboard, type and send a message.
+   Back out to Home and verify relocking. Repeat after reopening from Recents and screen sleep.
+9. Enable **Allow posts and shared Reels** (after the Strict Mode wait if enabled). Check ordinary
+   Home posts and Stories, then open a friend's shared Reel from a conversation. If the opaque lock
+   appears, use **Watch without scrolling** when offered. Try repeated swipes and taps: they must
+   not advance or interact with the viewer. Use **Back to messages** and send another message.
+10. Open the notification shade, keyboard, launcher and another app. No shield may cover them.
+    If any step fails, return to Scroll Guard and **Copy local diagnostic report**. No video or
+    computer is required. Paste the report when asking for a fix; it contains structural metadata,
+    not message text, captions, usernames or passwords. No report is sent automatically.
 
 The shield blocks interaction and viewing; it does not directly control Instagram's audio player.
 Use whole-app mode if you also need to leave any playback. The Android accessibility permission
@@ -75,15 +110,47 @@ must remain enabled; Strict Mode controls the app's switches, not Android's syst
 
 ## Android enforcement tests
 
-CI runs nine instrumented tests on an Android 15 emulator, in addition to unit tests and lint.
+CI runs an expanded instrumented suite on an Android 15 emulator, in addition to unit tests and lint.
 They exercise the actual accessibility service and overlay: touch interception, unknown interfaces,
 native messages/profile navigation, Stories, return-to-Home relocking, launcher cleanup, disabling
 protection, whole-app blocking and the persisted Strict Mode delay.
+The previous suite did not open a conversation after the inbox. New regressions exercise a separate
+conversation with an editable composer, message history, a real IME, send action and repeated checks
+through the watchdog. They also cover conflicting/cached nodes, empty/truncated trees, rapid return,
+Recents, shade, rotation, sleep, service reconnection and the weaker-mode persistent delay. No
+privacy-safe structural sample from the user's actual failing Instagram screen was available; these
+samples are synthetic and must not be presented as real-device compatibility proof.
 
 `guard-test-fixture` is an emulator-only application using the Instagram package name, with a
 deliberately generic feed and known safe-screen resource IDs. It is never part of Scroll Guard's APK.
 Do not install that fixture on a personal phone with Instagram. These tests verify Android
 enforcement mechanics; they do not establish compatibility with every real Instagram UI version.
+The shared-media observable-event scenario deliberately delays its synthetic transition; the
+separate explicit-watch fallback addresses missing click-source events without uncovering a feed.
+
+Android documents that the active window can change with touch or input focus, and that interactive
+windows are available independently of the active root. The service selects current application
+windows, treats IME/system windows separately and clips the overlay to application/system-bar bounds.
+See the official [AccessibilityService reference](https://developer.android.com/reference/android/accessibilityservice/AccessibilityService)
+and [AccessibilityWindowInfo reference](https://developer.android.com/reference/android/view/accessibility/AccessibilityWindowInfo).
+These are Android contracts. All Instagram resource-name interpretations are compatibility
+assumptions, checked conservatively and exposed in diagnostics.
+
+## History and update compatibility
+
+Existing DataStore keys, archives, widget identities and Strict Mode deadlines remain intact.
+All Time starts at the earliest available local archived day, explains history gaps and does not
+claim Android's deleted events can be recovered. Day charts use actual local-day hours, including
+23/25-hour daylight-saving days. Period comparisons cover equivalent elapsed windows. The impact
+report labels time saved as an estimate and suppresses comparisons when boundary history is missing.
+Use **Correct start date and time** to correct the saved start; no calendar date is inferred from
+the earlier statement about Friday at 2 pm.
+
+CI restores the original cached signing key and pins `SCROLL_GUARD_SIGNING_STORE` outside emulator
+setup. It refuses to generate a replacement on cache loss. It checks the **actual final APK** after
+build, instrumentation and immediately before phone publication: certificate SHA-256
+`5f9a5eccde1fc15e4c60cc8ce3de4eab317fac4770c7795cebc49200840ad0cf`, package and version.
+Only successful checks publish the prerelease APK. Private signing material is never uploaded.
 
 On a disposable configured emulator, run:
 

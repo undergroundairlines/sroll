@@ -4,6 +4,7 @@ package app.scrollguard
 import android.app.UiAutomation
 import android.accessibilityservice.AccessibilityServiceInfo
 import android.os.SystemClock
+import android.view.accessibility.AccessibilityWindowInfo
 import androidx.test.ext.junit.runners.AndroidJUnit4
 import androidx.test.platform.app.InstrumentationRegistry
 import androidx.test.uiautomator.By
@@ -36,6 +37,7 @@ class InstagramEnforcementTest {
     private lateinit var device: UiDevice
     private val preferences by lazy { UserPreferencesProvider(instrumentation.targetContext) }
     private val guardTitle = By.res("app.scrollguard", "guard_title")
+    private val sharedBack = By.res("app.scrollguard", "guard_shared_back")
 
     @Before fun setup() {
         // UI Automator otherwise suppresses the very service these tests need to exercise.
@@ -96,6 +98,43 @@ class InstagramEnforcementTest {
         assertTrue(condition())
     }
 
+    private fun assertUnlocked() {
+        assertTrue("Allowed destination must be confirmed: ${ProtectionRuntime.state.value}",
+            device.wait(Until.gone(guardTitle), 8_000L))
+        // A single absent frame does not prove the watchdog leaves a conversation usable.
+        repeat(8) {
+            SystemClock.sleep(100L)
+            assertFalse("Allowed destination was reblocked: ${ProtectionRuntime.state.value}", device.hasObject(guardTitle))
+        }
+    }
+
+    private fun repeatFeedTouches() {
+        repeat(8) {
+            device.swipe(device.displayWidth / 2, device.displayHeight * 4 / 5,
+                device.displayWidth / 2, device.displayHeight / 5, 15)
+            device.click(device.displayWidth / 3, device.displayHeight / 5)
+            device.click(1, device.displayHeight / 5)
+            device.click(device.displayWidth - 2, device.displayHeight / 5)
+        }
+    }
+
+    private fun typeAndSendMessage() {
+        val editor = requireNotNull(device.wait(Until.findObject(
+            By.res("com.instagram.android", "row_thread_composer_edittext")), 8_000L))
+        editor.click()
+        awaitCondition {
+            instrumentation.getUiAutomation(UiAutomation.FLAG_DONT_SUPPRESS_ACCESSIBILITY_SERVICES)
+                .windows.any { it.type == AccessibilityWindowInfo.TYPE_INPUT_METHOD }
+        }
+        assertUnlocked()
+        editor.text = "Synthetic acceptance message"
+        // Back first dismisses the keyboard, leaving the conversation in place.
+        device.pressBack()
+        assertUnlocked()
+        device.findObject(By.res("com.instagram.android", "row_thread_composer_button_send")).click()
+        assertTrue(device.wait(Until.hasObject(By.text("Sent: 1")), 8_000L))
+    }
+
     private fun fixtureStatus(): String {
         val automation = instrumentation.getUiAutomation(UiAutomation.FLAG_DONT_SUPPRESS_ACCESSIBILITY_SERVICES)
         return automation.windows.asSequence().mapNotNull { it.root }
@@ -104,16 +143,17 @@ class InstagramEnforcementTest {
             .first().text.toString()
     }
 
+    private fun focusedApplicationPackage(): String? =
+        instrumentation.getUiAutomation(UiAutomation.FLAG_DONT_SUPPRESS_ACCESSIBILITY_SERVICES)
+            .windows.firstOrNull { it.type == AccessibilityWindowInfo.TYPE_APPLICATION && it.isFocused }
+            ?.root?.packageName?.toString()
+
     @Test fun swipesAndTapsCannotReachHomeEvenWithoutReelIds() {
         open("home")
         awaitLock()
         assertTrue(device.takeScreenshot(File(instrumentation.targetContext.getExternalFilesDir(null), "feed-lock.png")))
         assertEquals("Scroll: 0; clicks: 0", fixtureStatus())
-        repeat(6) {
-            device.swipe(device.displayWidth / 2, device.displayHeight * 4 / 5,
-                device.displayWidth / 2, device.displayHeight / 5, 20)
-        }
-        device.click(device.displayWidth / 2, device.displayHeight / 5)
+        repeatFeedTouches()
         assertEquals("Scroll: 0; clicks: 0", fixtureStatus())
         awaitLock()
     }
@@ -140,6 +180,165 @@ class InstagramEnforcementTest {
         awaitLock()
     }
 
+    @Test fun openingConversationFromInboxStaysUsableWithKeyboard() {
+        open("home")
+        awaitLock()
+        device.findObject(By.res("app.scrollguard", "guard_messages")).click()
+        assertTrue(device.wait(Until.hasObject(By.text("Fixture messages")), 8_000L))
+        assertUnlocked()
+        device.findObject(By.text("Open conversation")).click()
+        assertTrue(device.wait(Until.hasObject(By.text("Fixture conversation")), 8_000L))
+        assertUnlocked()
+        typeAndSendMessage()
+        device.findObject(By.res("com.instagram.android", "feed_tab")).click()
+        awaitLock()
+        repeatFeedTouches()
+        assertEquals("Scroll: 0; clicks: 0", fixtureStatus())
+    }
+
+    @Test fun acceptedNavigationClickDoesNotUncoverUnchangedScreen() {
+        open("navigation_noop")
+        awaitLock()
+        device.findObject(By.res("app.scrollguard", "guard_messages")).click()
+        SystemClock.sleep(800L)
+        awaitLock()
+        repeatFeedTouches()
+        assertEquals("Scroll: 0; clicks: 0", fixtureStatus())
+    }
+
+    @Test fun selectedProfileTabAndHiddenProfileNodesNeverUnlockFeed() {
+        for (screen in listOf("selected_profile", "stale_profile", "cached_profile")) {
+            open(screen)
+            awaitLock()
+            repeatFeedTouches()
+            assertEquals("Scroll: 0; clicks: 0", fixtureStatus())
+        }
+    }
+
+    @Test fun emptyAndTruncatedInterfacesRemainLocked() {
+        for (screen in listOf("empty_tree", "truncated")) {
+            open(screen)
+            awaitLock()
+            repeatFeedTouches()
+            awaitLock()
+        }
+    }
+
+    @Test fun delayedReturnHomeRelocksEvenWhenFixtureSuppressesChildEvents() {
+        open("messages")
+        assertTrue(device.wait(Until.hasObject(By.text("Fixture messages")), 8_000L))
+        assertUnlocked()
+        device.findObject(By.text("Silent return Home")).click()
+        awaitLock()
+        repeatFeedTouches()
+        assertEquals("Scroll: 0; clicks: 0", fixtureStatus())
+    }
+
+    @Test fun reelsReachedFromConversationAreBlockedInFeedLockMode() {
+        open("conversation")
+        assertTrue(device.wait(Until.hasObject(By.text("Fixture conversation")), 8_000L))
+        assertUnlocked()
+        device.findObject(By.text("Open shared Reel")).click()
+        awaitLock()
+        repeatFeedTouches()
+        assertEquals("Scroll: 0; clicks: 0", fixtureStatus())
+        assertFalse(device.hasObject(sharedBack))
+    }
+
+    @Test fun profileReelsAndExploreStayBlocked() {
+        for (mode in listOf(InstagramProtectionMode.FEED_LOCK, InstagramProtectionMode.SOCIAL)) {
+            runBlocking { preferences.requestInstagramProtectionMode(mode, System.currentTimeMillis()) }
+            open("profile")
+            assertTrue(device.wait(Until.hasObject(By.text("Fixture profile")), 8_000L))
+            assertUnlocked()
+            device.findObject(By.text("Open profile Reel")).click()
+            awaitLock()
+            repeatFeedTouches()
+            assertEquals("Scroll: 0; clicks: 0", fixtureStatus())
+            open("explore")
+            awaitLock()
+            repeatFeedTouches()
+            assertEquals("Scroll: 0; clicks: 0", fixtureStatus())
+        }
+    }
+
+    @Test fun socialModeAllowsOrdinaryPostsButBlocksEmbeddedReelsAndUnknownUi() {
+        runBlocking { preferences.requestInstagramProtectionMode(InstagramProtectionMode.SOCIAL, System.currentTimeMillis()) }
+        open("home")
+        assertTrue(device.wait(Until.hasObject(By.res("com.instagram.android", "fixture_status")), 8_000L))
+        assertUnlocked()
+        device.swipe(device.displayWidth / 2, device.displayHeight * 4 / 5,
+            device.displayWidth / 2, device.displayHeight / 5, 20)
+        awaitCondition { fixtureStatus() != "Scroll: 0; clicks: 0" }
+        for (screen in listOf("home_reel", "unknown", "selected_profile")) {
+            open(screen)
+            awaitLock()
+            repeatFeedTouches()
+            assertEquals("Scroll: 0; clicks: 0", fixtureStatus())
+        }
+    }
+
+    @Test fun socialModeSharedReelCannotSwipeIntoRecommendationFeed() {
+        runBlocking { preferences.requestInstagramProtectionMode(InstagramProtectionMode.SOCIAL, System.currentTimeMillis()) }
+        open("conversation")
+        assertTrue(device.wait(Until.hasObject(By.text("Fixture conversation")), 8_000L))
+        assertUnlocked()
+        device.findObject(By.res("com.instagram.android", "direct_shared_reel")).click()
+        assertTrue("Shared viewer must be protected by its own touch shield", device.wait(Until.hasObject(sharedBack), 8_000L))
+        repeatFeedTouches()
+        assertEquals("Scroll: 0; clicks: 0", fixtureStatus())
+        device.findObject(sharedBack).click()
+        assertTrue(device.wait(Until.hasObject(By.text("Fixture conversation")), 8_000L))
+        assertTrue(device.wait(Until.gone(sharedBack), 8_000L))
+        assertUnlocked()
+        typeAndSendMessage()
+    }
+
+    @Test fun socialModeViewerOpenedWithoutMessageClickIsLocked() {
+        runBlocking { preferences.requestInstagramProtectionMode(InstagramProtectionMode.SOCIAL, System.currentTimeMillis()) }
+        open("shared_reel")
+        awaitLock()
+        assertFalse(device.hasObject(sharedBack))
+        repeatFeedTouches()
+        assertEquals("Scroll: 0; clicks: 0", fixtureStatus())
+    }
+
+    @Test fun immediateMessageViewerNeedsExplicitWatchWhenClickSourceIsDestroyed() {
+        runBlocking { preferences.requestInstagramProtectionMode(InstagramProtectionMode.SOCIAL, System.currentTimeMillis()) }
+        open("conversation_immediate")
+        assertTrue(device.wait(Until.hasObject(By.text("Fixture conversation")), 8_000L))
+        assertUnlocked()
+        device.findObject(By.res("com.instagram.android", "fixture_shared_reel_no_source")).click()
+        awaitLock()
+        assertFalse("Missing positive click source must not automatically allow viewing", device.hasObject(sharedBack))
+        assertEquals("Scroll: 0; clicks: 0", fixtureStatus())
+        val watch = requireNotNull(device.wait(Until.findObject(By.res("app.scrollguard", "guard_watch_shared")), 8_000L))
+        watch.click()
+        assertTrue(device.wait(Until.hasObject(sharedBack), 8_000L))
+        repeatFeedTouches()
+        assertEquals("Scroll: 0; clicks: 0", fixtureStatus())
+        device.findObject(sharedBack).click()
+        assertTrue(device.wait(Until.hasObject(By.text("Fixture conversation")), 8_000L))
+        assertTrue(device.wait(Until.gone(sharedBack), 8_000L))
+        assertUnlocked()
+        typeAndSendMessage()
+    }
+
+    @Test fun conversationProfileClickNeverGrantsSharedReelAccess() {
+        runBlocking { preferences.requestInstagramProtectionMode(InstagramProtectionMode.SOCIAL, System.currentTimeMillis()) }
+        open("conversation")
+        assertTrue(device.wait(Until.hasObject(By.text("Fixture conversation")), 8_000L))
+        assertUnlocked()
+        device.findObject(By.text("Open contact profile")).click()
+        assertTrue(device.wait(Until.hasObject(By.text("Fixture profile")), 8_000L))
+        // Navigate promptly: a blanket grace period for every DM click would admit this Reel.
+        device.findObject(By.text("Open profile Reel")).click()
+        awaitLock()
+        assertFalse(device.hasObject(sharedBack))
+        repeatFeedTouches()
+        assertEquals("Scroll: 0; clicks: 0", fixtureStatus())
+    }
+
     @Test fun ownProfileCanOpenThroughShield() {
         open("home")
         awaitLock()
@@ -161,7 +360,71 @@ class InstagramEnforcementTest {
         awaitLock()
         device.findObject(By.res("app.scrollguard", "guard_leave")).click()
         assertTrue(device.wait(Until.gone(guardTitle), 8_000L))
-        assertFalse(device.currentPackageName == "com.instagram.android")
+        awaitCondition { focusedApplicationPackage()?.let { it != "com.instagram.android" } == true }
+    }
+
+    @Test fun shadeOtherAppAndRecentsNeverKeepInstagramShield() {
+        open("home")
+        awaitLock()
+        assertTrue(device.openNotification())
+        assertTrue(device.wait(Until.gone(guardTitle), 8_000L))
+        device.pressBack()
+        awaitLock()
+        device.executeShellCommand("am start -W -a android.settings.SETTINGS")
+        assertTrue(device.wait(Until.gone(guardTitle), 8_000L))
+        device.pressBack()
+        awaitLock()
+        device.pressRecentApps()
+        assertTrue(device.wait(Until.gone(guardTitle), 8_000L))
+        device.click(device.displayWidth / 2, device.displayHeight / 2)
+        awaitLock()
+        assertEquals("Scroll: 0; clicks: 0", fixtureStatus())
+    }
+
+    @Test fun coldLaunchRotationAndServiceReconnectRestoreProtection() {
+        device.pressHome()
+        device.executeShellCommand("am force-stop com.instagram.android")
+        open("home")
+        awaitLock()
+        device.setOrientationLeft()
+        awaitLock()
+        repeatFeedTouches()
+        assertEquals("Scroll: 0; clicks: 0", fixtureStatus())
+        device.setOrientationNatural()
+        awaitLock()
+        device.executeShellCommand("settings put secure enabled_accessibility_services ''")
+        awaitCondition { !ProtectionRuntime.state.value.connected }
+        assertTrue(device.wait(Until.gone(guardTitle), 8_000L))
+        device.executeShellCommand("settings put secure enabled_accessibility_services app.scrollguard/app.scrollguard.services.ShortFormContentBlockerService")
+        awaitCondition { ProtectionRuntime.state.value.connected && ProtectionRuntime.state.value.preferencesApplied }
+        awaitLock()
+        repeatFeedTouches()
+        assertEquals("Scroll: 0; clicks: 0", fixtureStatus())
+    }
+
+    @Test fun screenOffRemovesShieldAndWakeRestoresProtection() {
+        open("home")
+        awaitLock()
+        device.sleep()
+        assertTrue(device.wait(Until.gone(guardTitle), 8_000L))
+        device.wakeUp()
+        // Emulator has no personal credential; this never disables a real phone's lock.
+        device.executeShellCommand("wm dismiss-keyguard")
+        awaitLock()
+        repeatFeedTouches()
+        assertEquals("Scroll: 0; clicks: 0", fixtureStatus())
+    }
+
+    @Test fun rapidConversationHomeTransitionsAlwaysFinishLocked() {
+        repeat(5) {
+            open("conversation")
+            assertTrue(device.wait(Until.hasObject(By.text("Fixture conversation")), 8_000L))
+            assertTrue(device.wait(Until.gone(guardTitle), 8_000L))
+            device.findObject(By.res("com.instagram.android", "feed_tab")).click()
+            awaitLock()
+        }
+        repeatFeedTouches()
+        assertEquals("Scroll: 0; clicks: 0", fixtureStatus())
     }
 
     @Test fun turningInstagramOffRemovesShield() {
@@ -174,12 +437,16 @@ class InstagramEnforcementTest {
         awaitCondition { fixtureStatus() != "Scroll: 0; clicks: 0" }
     }
 
-    @Test fun wholeAppModeExitsEvenMessages() {
+    @Test fun wholeAppModeExitsMessagesProfilesStoriesAndReels() {
         runBlocking {
             preferences.requestInstagramProtectionMode(InstagramProtectionMode.APP_LOCK, System.currentTimeMillis())
         }
-        open("messages")
-        awaitCondition { device.currentPackageName != "com.instagram.android" && !device.hasObject(guardTitle) }
+        for (screen in listOf("messages", "conversation", "profile", "story", "shared_reel", "explore")) {
+            open(screen)
+            awaitCondition {
+                focusedApplicationPackage()?.let { it != "com.instagram.android" } == true && !device.hasObject(guardTitle)
+            }
+        }
     }
 
     @Test fun strictModeCannotBeBypassedByChangingProtectionMode() = runBlocking {
@@ -194,5 +461,24 @@ class InstagramEnforcementTest {
         assertTrue(preferences.completeStrictModeUnlockIfExpired(settings.unlockAtMillis))
         assertEquals(InstagramProtectionMode.FEED_LOCK, preferences.getInstagramProtectionMode().first())
         assertEquals(listOf("com.instagram.android"), preferences.getTrackedPackages().first())
+    }
+
+    @Test fun socialWeakeningDeadlinePersistsAndKeepsInstagramEnabled() = runBlocking {
+        preferences.enableStrictMode()
+        val requestedAt = System.currentTimeMillis()
+        preferences.requestInstagramProtectionMode(InstagramProtectionMode.SOCIAL, requestedAt)
+        val pending = preferences.getStrictModeSettings().first()
+        assertEquals(StrictModePolicy.INSTAGRAM_SOCIAL_TARGET, pending.pendingTarget)
+        assertEquals(requestedAt + StrictModePolicy.UNLOCK_DELAY_MILLIS, pending.unlockAtMillis)
+        val reopenedPreferences = UserPreferencesProvider(instrumentation.targetContext)
+        assertEquals(pending, reopenedPreferences.getStrictModeSettings().first())
+        reopenedPreferences.requestInstagramProtectionMode(InstagramProtectionMode.SOCIAL, requestedAt + 60_000L)
+        assertEquals(pending.unlockAtMillis, reopenedPreferences.getStrictModeSettings().first().unlockAtMillis)
+        assertFalse(reopenedPreferences.completeStrictModeUnlockIfExpired(pending.unlockAtMillis - 1L))
+        assertEquals(InstagramProtectionMode.FEED_LOCK, reopenedPreferences.getInstagramProtectionMode().first())
+        assertEquals(listOf("com.instagram.android"), reopenedPreferences.getTrackedPackages().first())
+        assertTrue(reopenedPreferences.completeStrictModeUnlockIfExpired(pending.unlockAtMillis))
+        assertEquals(InstagramProtectionMode.SOCIAL, reopenedPreferences.getInstagramProtectionMode().first())
+        assertEquals(listOf("com.instagram.android"), reopenedPreferences.getTrackedPackages().first())
     }
 }

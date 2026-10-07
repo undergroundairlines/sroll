@@ -8,6 +8,8 @@
 package app.scrollguard.ui.screens
 
 import android.content.Intent
+import android.app.DatePickerDialog
+import android.app.TimePickerDialog
 import android.net.Uri
 import android.provider.Settings
 import androidx.activity.compose.BackHandler
@@ -72,8 +74,10 @@ import app.scrollguard.ui.components.AppSectionSwitcher
 import app.scrollguard.ui.components.AppIcon
 import app.scrollguard.ui.viewmodels.ScreenTimeState
 import app.scrollguard.utils.ScreenTimeFormatting
+import app.scrollguard.services.ImpactBaselineStore
 import java.text.SimpleDateFormat
 import java.util.Date
+import java.util.Calendar
 import kotlin.math.abs
 import kotlin.math.roundToInt
 
@@ -130,7 +134,7 @@ fun ScreenTimeScreen(
             Spacer(modifier = Modifier.height(80.dp))
             CircularProgressIndicator()
             Spacer(modifier = Modifier.height(16.dp))
-            Text("Building an exact usage history…")
+            Text("Reading available usage history…")
         } else {
             state.report?.let { report ->
                 ScreenTimeDashboard(
@@ -233,14 +237,14 @@ private fun ScreenTimeDashboard(
         Spacer(modifier = Modifier.height(14.dp))
     }
     report.impact?.let { impact ->
-        ImpactSection(impact)
+        ImpactSection(impact, onRefresh)
         Spacer(modifier = Modifier.height(14.dp))
     }
     UsageBarChart(report.usageBuckets, report.chartTitle)
     Spacer(modifier = Modifier.height(14.dp))
     AppBreakdown(report.apps, report.totalMillis, onAppSelected)
 
-    TextButton(onClick = onRefresh) { Text("Refresh exact data") }
+    TextButton(onClick = onRefresh) { Text("Refresh usage data") }
 }
 
 @Composable
@@ -341,17 +345,19 @@ private fun DailyGoalSection(
 }
 
 @Composable
-private fun ImpactSection(impact: ScreenTimeImpact) {
+private fun ImpactSection(impact: ScreenTimeImpact, onRefresh: () -> Unit) {
     var showAllApps by rememberSaveable { mutableStateOf(false) }
+    val context = LocalContext.current
     val locale = LocalConfiguration.current.locales[0]
     val started = SimpleDateFormat("EEE d MMM, h:mm a", locale)
         .format(Date(impact.startedAtMillis))
     val change = impact.changePercentage
     val headline = when {
+        !impact.historyComplete -> "Comparison history has gaps"
         change == null -> "Building your comparison"
-        change < 0 -> "${abs(change)}% less phone time"
-        change > 0 -> "${abs(change)}% more phone time"
-        else -> "Phone time is unchanged"
+        change < 0 -> "${abs(change)}% less app time"
+        change > 0 -> "${abs(change)}% more app time"
+        else -> "App time is unchanged"
     }
 
     Card(
@@ -374,10 +380,12 @@ private fun ImpactSection(impact: ScreenTimeImpact) {
                 modifier = Modifier.padding(top = 6.dp),
             )
             Text(
-                text = if (impact.timeSavedMillis > 0L) {
-                    "${ScreenTimeFormatting.duration(impact.timeSavedMillis)} saved so far"
+                text = if (!impact.historyComplete) {
+                    "Time-saved estimate unavailable with missing history"
+                } else if (impact.timeSavedMillis > 0L) {
+                    "Estimated time saved: ${ScreenTimeFormatting.duration(impact.timeSavedMillis)}"
                 } else {
-                    "No time saved yet"
+                    "Estimated time saved: 0m"
                 },
                 style = MaterialTheme.typography.bodyLarge,
                 color = MaterialTheme.colorScheme.onSurfaceVariant,
@@ -400,11 +408,36 @@ private fun ImpactSection(impact: ScreenTimeImpact) {
                 )
             }
             Text(
-                text = "Compared with the ${impact.baselineDays} days before $started",
+                text = "Started $started. Before and since use matching " +
+                    "${ScreenTimeFormatting.duration(impact.comparisonWindowMillis)} periods. " +
+                    "Time saved is an estimate; other changes can affect usage. " +
+                    "Missing Android history cannot be recovered.",
                 style = MaterialTheme.typography.bodySmall,
                 color = MaterialTheme.colorScheme.onSurfaceVariant,
                 modifier = Modifier.padding(top = 10.dp),
             )
+            TextButton(onClick = {
+                val chosen = Calendar.getInstance().apply { timeInMillis = impact.startedAtMillis }
+                DatePickerDialog(context, { _, year, month, day ->
+                    chosen.set(Calendar.YEAR, year)
+                    chosen.set(Calendar.MONTH, month)
+                    chosen.set(Calendar.DAY_OF_MONTH, day)
+                    TimePickerDialog(context, { _, hour, minute ->
+                        chosen.set(Calendar.HOUR_OF_DAY, hour)
+                        chosen.set(Calendar.MINUTE, minute)
+                        chosen.set(Calendar.SECOND, 0)
+                        chosen.set(Calendar.MILLISECOND, 0)
+                        ImpactBaselineStore(context).setStartedAt(
+                            chosen.timeInMillis.coerceAtMost(System.currentTimeMillis()),
+                        )
+                        onRefresh()
+                    }, chosen.get(Calendar.HOUR_OF_DAY), chosen.get(Calendar.MINUTE),
+                        android.text.format.DateFormat.is24HourFormat(context)).show()
+                }, chosen.get(Calendar.YEAR), chosen.get(Calendar.MONTH),
+                    chosen.get(Calendar.DAY_OF_MONTH)).apply {
+                    datePicker.maxDate = System.currentTimeMillis()
+                }.show()
+            }) { Text("Correct start date and time") }
 
             if (impact.apps.isNotEmpty()) {
                 Spacer(modifier = Modifier.height(18.dp))
@@ -492,9 +525,18 @@ private fun UsageSummary(report: ScreenTimeReport) {
             modifier = Modifier.weight(1f),
         )
         SummaryCard(
-            label = "Pickups",
+            label = "Screen wakes",
             value = report.pickups.toString(),
             modifier = Modifier.weight(1f),
+        )
+    }
+    if (!report.historyComplete) {
+        Text(
+            "Some Android history is missing. Totals show available records; a percentage " +
+                "change is unavailable when the comparison has gaps.",
+            style = MaterialTheme.typography.bodySmall,
+            color = MaterialTheme.colorScheme.onSurfaceVariant,
+            modifier = Modifier.padding(top = 8.dp),
         )
     }
     if (report.period == UsagePeriod.ALL) {
@@ -502,7 +544,8 @@ private fun UsageSummary(report: ScreenTimeReport) {
         val date = SimpleDateFormat("d MMM yyyy", locale)
             .format(Date(report.trackingSinceMillis))
         Text(
-            text = "Recorded history since $date",
+            text = "Available recorded history since $date. Android may have deleted older " +
+                "events or left gaps; All Time includes only available local records.",
             style = MaterialTheme.typography.bodySmall,
             color = MaterialTheme.colorScheme.onSurfaceVariant,
             modifier = Modifier.padding(top = 8.dp),
@@ -668,6 +711,12 @@ private fun AppBreakdown(
     ) {
         Column(modifier = Modifier.padding(18.dp)) {
             Text("Apps", style = MaterialTheme.typography.titleMedium, fontWeight = FontWeight.Bold)
+            Text(
+                "Percentages are a share of recorded app time, excluding Scroll Guard, " +
+                    "the launcher and system controls.",
+                style = MaterialTheme.typography.bodySmall,
+                color = MaterialTheme.colorScheme.onSurfaceVariant,
+            )
             if (apps.isEmpty()) {
                 Text(
                     text = "No app activity was recorded in this period.",
@@ -809,8 +858,8 @@ private fun comparisonText(report: ScreenTimeReport): String {
     val change = report.changePercentage ?: return "No earlier data to compare"
     val comparison = when (report.period) {
         UsagePeriod.DAY -> "the same time yesterday"
-        UsagePeriod.WEEK -> "the previous 7 days"
-        UsagePeriod.MONTH -> "the previous 30 days"
+        UsagePeriod.WEEK -> "the same elapsed time in the previous week"
+        UsagePeriod.MONTH -> "the same elapsed time in the previous 30-day period"
         UsagePeriod.ALL -> return "Available usage history"
     }
     return when {

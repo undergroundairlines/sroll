@@ -7,6 +7,7 @@ import android.graphics.PixelFormat
 import android.graphics.Typeface
 import android.graphics.drawable.GradientDrawable
 import android.os.Build
+import android.os.SystemClock
 import android.view.Gravity
 import android.view.View
 import android.view.WindowManager
@@ -25,6 +26,9 @@ internal data class InstagramLockPanel(
     val wholeApp: Boolean,
     val canOpenMessages: Boolean,
     val canOpenProfile: Boolean,
+    val sharedReel: Boolean = false,
+    val socialMode: Boolean = false,
+    val canWatchShared: Boolean = false,
 )
 
 /** A touchable full-window shield. No touches or swipes pass through to the feed. */
@@ -32,6 +36,8 @@ internal class InstagramLockOverlay(
     private val context: Context,
     private val onNavigate: (InstagramDestination) -> Unit,
     private val onLeave: () -> Unit,
+    private val onSharedBack: () -> Unit,
+    private val onWatchShared: () -> Unit,
 ) {
     private val windows = context.getSystemService(Context.WINDOW_SERVICE) as WindowManager
     private var view: View? = null
@@ -40,17 +46,31 @@ internal class InstagramLockOverlay(
     private var explanation: TextView? = null
     private var messages: Button? = null
     private var profile: Button? = null
+    private var watchShared: Button? = null
+    private var attachRequestedAt = 0L
     val isShowing: Boolean get() = view != null
+    val isAttached: Boolean get() = view?.let { it.isAttachedToWindow && it.isShown && it.width > 0 && it.height > 0 } == true
+    var status: String = "Removed"
+        private set
 
     fun show(panel: InstagramLockPanel): Boolean {
         if (panel.bounds.width <= 0 || panel.bounds.height <= 0) return false
-        if (view != null && lastPanel == panel) return true
+        if (view != null && lastPanel?.sharedReel != panel.sharedReel) hide()
+        if (view != null && lastPanel == panel) {
+            if (!isAttached && SystemClock.uptimeMillis() - attachRequestedAt > 1000L) {
+                hide()
+                status = "Attachment/layout failed; leaving Instagram"
+                return false
+            }
+            status = if (isAttached) "Attached; touchable" else "Attachment/layout pending"
+            return true
+        }
         val root = view ?: buildView()
         val rect = panel.bounds
         val params = WindowManager.LayoutParams(
             rect.width, rect.height, WindowManager.LayoutParams.TYPE_ACCESSIBILITY_OVERLAY,
             WindowManager.LayoutParams.FLAG_NOT_FOCUSABLE or WindowManager.LayoutParams.FLAG_LAYOUT_IN_SCREEN,
-            PixelFormat.OPAQUE,
+            if (panel.sharedReel) PixelFormat.TRANSLUCENT else PixelFormat.OPAQUE,
         ).apply {
             gravity = Gravity.TOP or Gravity.LEFT
             x = rect.left
@@ -63,14 +83,19 @@ internal class InstagramLockOverlay(
         }
         return runCatching {
             updateLabels(panel)
-            if (view == null) windows.addView(root, params)
+            if (view == null) {
+                windows.addView(root, params)
+                attachRequestedAt = SystemClock.uptimeMillis()
+            }
             else if (lastPanel?.bounds != panel.bounds) windows.updateViewLayout(root, params)
             view = root
             lastPanel = panel
+            status = if (isAttached) "Attached; touchable" else "Attachment/layout pending"
             true
         }.getOrElse {
             Timber.e(it, "Instagram touch shield could not attach")
             hide()
+            status = "Failed to attach"
             false
         }
     }
@@ -80,13 +105,26 @@ internal class InstagramLockOverlay(
     }
 
     fun hide() {
-        view?.let { runCatching { windows.removeViewImmediate(it) } }
+        val removed = view?.let { runCatching { windows.removeViewImmediate(it) }.isSuccess } ?: true
+        if (!removed && view?.isAttachedToWindow == true) {
+            // Keep the removal handle and retry on the next foreground check. Hide immediately.
+            view?.visibility = View.GONE
+            view?.let { root -> runCatching {
+                val params = root.layoutParams as WindowManager.LayoutParams
+                params.flags = params.flags or WindowManager.LayoutParams.FLAG_NOT_TOUCHABLE
+                windows.updateViewLayout(root, params)
+            } }
+            status = "Removal failed; hidden; retry pending"
+            return
+        }
         view = null
         lastPanel = null
         title = null
         explanation = null
         messages = null
         profile = null
+        watchShared = null
+        status = if (removed) "Removed" else "Removal failed"
     }
 
     private fun updateLabels(panel: InstagramLockPanel) {
@@ -94,7 +132,8 @@ internal class InstagramLockOverlay(
         explanation?.text = if (panel.wholeApp) {
             "You chose to block the whole app. Your time is yours."
         } else {
-            "Home, Reels and Explore are off limits.\nOpen messages or your profile with a purpose."
+            if (panel.socialMode) "This Reel or Explore screen is locked.\nMessages, Stories and recognised posts stay usable."
+            else "The entire Home feed, Reels and Explore are locked, including ordinary posts.\nOpen messages or your profile."
         }
         messages?.visibility = if (panel.wholeApp) View.GONE else View.VISIBLE
         profile?.visibility = if (panel.wholeApp) View.GONE else View.VISIBLE
@@ -102,6 +141,7 @@ internal class InstagramLockOverlay(
         profile?.isEnabled = panel.canOpenProfile
         messages?.alpha = if (panel.canOpenMessages) 1f else 0.4f
         profile?.alpha = if (panel.canOpenProfile) 1f else 0.4f
+        watchShared?.visibility = if (panel.canWatchShared && !panel.wholeApp) View.VISIBLE else View.GONE
     }
 
     private fun buildView(): View {
@@ -119,6 +159,27 @@ internal class InstagramLockOverlay(
     private fun buildContent(root: FrameLayout) {
         val density = context.resources.displayMetrics.density
         fun dp(value: Int) = (value * density).toInt()
+        if (lastPanel?.sharedReel == true) {
+            root.setBackgroundColor(Color.TRANSPARENT)
+            val controls = LinearLayout(context).apply {
+                orientation = LinearLayout.VERTICAL
+                setPadding(dp(16), dp(8), dp(16), dp(16))
+                setBackgroundColor(Color.rgb(12, 12, 12))
+                addView(TextView(context).apply {
+                    text = "Shared Reel · scrolling and Instagram taps are locked"
+                    setTextColor(Color.WHITE)
+                    textSize = 14f
+                })
+                addView(Button(context).apply {
+                    id = R.id.guard_shared_back
+                    text = "Back to messages"
+                    isAllCaps = false
+                    setOnClickListener { onSharedBack() }
+                })
+            }
+            root.addView(controls, FrameLayout.LayoutParams(-1, -2, Gravity.BOTTOM))
+            return
+        }
         val content = LinearLayout(context).apply {
             orientation = LinearLayout.VERTICAL
             gravity = Gravity.CENTER
@@ -159,6 +220,7 @@ internal class InstagramLockOverlay(
         }
         messages = button("Open messages", R.id.guard_messages, true) { onNavigate(InstagramDestination.MESSAGES) }
         profile = button("Open my profile", R.id.guard_profile, false) { onNavigate(InstagramDestination.PROFILE) }
+        watchShared = button("Watch without scrolling", R.id.guard_watch_shared, false, onWatchShared)
         button("Leave Instagram", R.id.guard_leave, false, onLeave)
         content.addView(label("The feed stays locked until you change protection in Scroll Guard.",
             12f, Color.rgb(140, 140, 140)))

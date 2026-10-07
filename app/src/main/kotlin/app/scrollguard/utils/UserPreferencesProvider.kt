@@ -68,15 +68,17 @@ class UserPreferencesProvider(private val context: Context) {
     suspend fun requestInstagramProtectionMode(mode: InstagramProtectionMode, nowMillis: Long) {
         context.dataStore.edit { preferences ->
             val current = InstagramProtectionMode.fromStored(preferences[instagramModeKey])
-            if (current == InstagramProtectionMode.APP_LOCK && mode == InstagramProtectionMode.FEED_LOCK &&
+            if (mode.strength < current.strength &&
                 preferences[strictModeEnabledKey] == true) {
                 if (preferences[strictModePendingTargetKey] == null) {
-                    preferences[strictModePendingTargetKey] = StrictModePolicy.INSTAGRAM_FEED_TARGET
+                    preferences[strictModePendingTargetKey] = if (mode == InstagramProtectionMode.SOCIAL)
+                        StrictModePolicy.INSTAGRAM_SOCIAL_TARGET else StrictModePolicy.INSTAGRAM_FEED_TARGET
                     preferences[strictModeUnlockAtKey] = StrictModePolicy.unlockAt(nowMillis)
                 }
             } else {
                 preferences[instagramModeKey] = mode.name
-                if (preferences[strictModePendingTargetKey] == StrictModePolicy.INSTAGRAM_FEED_TARGET) {
+                if (preferences[strictModePendingTargetKey] in setOf(StrictModePolicy.INSTAGRAM_FEED_TARGET,
+                        StrictModePolicy.INSTAGRAM_SOCIAL_TARGET)) {
                     preferences.remove(strictModePendingTargetKey)
                     preferences.remove(strictModeUnlockAtKey)
                 }
@@ -107,7 +109,16 @@ class UserPreferencesProvider(private val context: Context) {
         val packagesString = packages.joinToString(",")
         Timber.d("Setting tracked packages: $packagesString")
         context.dataStore.edit { preferences ->
-            preferences[userPreferencesKey] = packagesString
+            val current = preferences[userPreferencesKey]?.split(",")?.filter { it.isNotBlank() }
+                ?: PackageConstants.DEFAULT_ENABLED_PACKAGES
+            val removed = current.filter { it !in packages }
+            if (preferences[strictModeEnabledKey] == true && removed.isNotEmpty()) {
+                if (preferences[strictModePendingTargetKey] == null) {
+                    preferences[strictModePendingTargetKey] = removed.first()
+                    preferences[strictModeUnlockAtKey] = StrictModePolicy.unlockAt(System.currentTimeMillis())
+                }
+                preferences[userPreferencesKey] = (current + packages).distinct().joinToString(",")
+            } else preferences[userPreferencesKey] = packagesString
         }
     }
 
@@ -190,6 +201,8 @@ class UserPreferencesProvider(private val context: Context) {
                     preferences[strictModeEnabledKey] = false
                 } else if (target == StrictModePolicy.INSTAGRAM_FEED_TARGET) {
                     preferences[instagramModeKey] = InstagramProtectionMode.FEED_LOCK.name
+                } else if (target == StrictModePolicy.INSTAGRAM_SOCIAL_TARGET) {
+                    preferences[instagramModeKey] = InstagramProtectionMode.SOCIAL.name
                 } else {
                     val packages = preferences[userPreferencesKey]
                         ?.split(",")

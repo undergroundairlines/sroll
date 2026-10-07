@@ -108,9 +108,79 @@ class DetectionDiagnosticsTest {
             DetectionActionStatus.COOLDOWN,
         )
         assertEquals(
-            DetectionActionStatus.PERFORMED,
+            DetectionActionStatus.COOLDOWN,
             DetectionDiagnostics.records.value.getValue("com.instagram.android").actionStatus,
         )
+    }
+
+    @Test fun lowerScoreOnTheSameActionReplacesAnEarlierBlockingResult() {
+        DetectionDiagnostics.clear()
+        val packageName = "com.google.android.youtube"
+        DetectionDiagnostics.report(DetectionResult(packageName, 20, 7,
+            listOf("Shorts viewer"), listOf("reel_watch_fragment"), BlockAction.BACK))
+        DetectionDiagnostics.reportActionStatus(packageName, BlockAction.BACK, DetectionActionStatus.PERFORMED)
+        DetectionDiagnostics.report(DetectionResult(packageName, 0, 7,
+            listOf("Ordinary video"), listOf("watch_player"), BlockAction.BACK))
+        val record = DetectionDiagnostics.records.value.getValue(packageName)
+        assertEquals(0, record.score)
+        assertEquals(listOf("Ordinary video"), record.reasons)
+        assertEquals(listOf("watch_player"), record.identifiers)
+        assertEquals(DetectionActionStatus.BELOW_THRESHOLD, record.actionStatus)
+    }
+
+    @Test fun aNewSampleDoesNotRetainOldActionOrCoverOutcomes() {
+        val packageName = "com.instagram.android"
+        for (oldStatus in listOf(DetectionActionStatus.PERFORMED, DetectionActionStatus.TOUCH_BLOCKED,
+            DetectionActionStatus.FEED_SCROLL_SENT, DetectionActionStatus.FAILED)) {
+            DetectionDiagnostics.clear()
+            val result = DetectionResult(packageName, 8, 7,
+                listOf("Visible Reel"), action = BlockAction.SKIP_REEL)
+            DetectionDiagnostics.report(result)
+            DetectionDiagnostics.reportActionStatus(packageName, result.action, oldStatus)
+            DetectionDiagnostics.reportVideoCoverStatus(packageName, VideoCoverStatus.ADDED)
+            DetectionDiagnostics.report(result)
+            val record = DetectionDiagnostics.records.value.getValue(packageName)
+            assertEquals(DetectionActionStatus.READY, record.actionStatus)
+            assertEquals(VideoCoverStatus.NONE, record.videoCoverStatus)
+        }
+    }
+
+    @Test fun aStatusForAnOldActionCannotReplaceTheLatestAction() {
+        DetectionDiagnostics.clear()
+        val packageName = "com.instagram.android"
+        DetectionDiagnostics.report(DetectionResult(packageName, 8, 7,
+            listOf("Old action"), action = BlockAction.SKIP_REEL))
+        DetectionDiagnostics.report(DetectionResult(packageName, 1, 1,
+            listOf("Current lock"), action = BlockAction.LOCK_FEED))
+        DetectionDiagnostics.reportActionStatus(packageName, BlockAction.SKIP_REEL, DetectionActionStatus.PERFORMED)
+        DetectionDiagnostics.reportVideoCoverStatus(packageName, VideoCoverStatus.ADDED)
+        val record = DetectionDiagnostics.records.value.getValue(packageName)
+        assertEquals(BlockAction.LOCK_FEED, record.action)
+        assertEquals(DetectionActionStatus.READY, record.actionStatus)
+        assertEquals(VideoCoverStatus.NONE, record.videoCoverStatus)
+    }
+
+    @Test fun aBelowThresholdSampleCannotAcquireAnOldBlockingOutcome() {
+        DetectionDiagnostics.clear()
+        val packageName = "com.instagram.android"
+        DetectionDiagnostics.report(DetectionResult(packageName, 0, 7,
+            listOf("No visible Reel"), action = BlockAction.SKIP_REEL))
+        DetectionDiagnostics.reportActionStatus(packageName, BlockAction.SKIP_REEL, DetectionActionStatus.PERFORMED)
+        DetectionDiagnostics.reportVideoCoverStatus(packageName, VideoCoverStatus.ADDED)
+        val record = DetectionDiagnostics.records.value.getValue(packageName)
+        assertEquals(DetectionActionStatus.BELOW_THRESHOLD, record.actionStatus)
+        assertEquals(VideoCoverStatus.NONE, record.videoCoverStatus)
+    }
+
+    @Test fun cooldownAlwaysDescribesTheCurrentAttemptEvenAfterSuccess() {
+        DetectionDiagnostics.clear()
+        val packageName = "com.google.android.youtube"
+        DetectionDiagnostics.report(DetectionResult(packageName, 20, 7,
+            listOf("Shorts viewer"), action = BlockAction.BACK))
+        DetectionDiagnostics.reportActionStatus(packageName, BlockAction.BACK, DetectionActionStatus.PERFORMED)
+        DetectionDiagnostics.reportActionStatus(packageName, BlockAction.BACK, DetectionActionStatus.COOLDOWN)
+        assertEquals(DetectionActionStatus.COOLDOWN,
+            DetectionDiagnostics.records.value.getValue(packageName).actionStatus)
     }
 
     @Test

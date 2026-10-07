@@ -25,12 +25,75 @@ internal data class NodeSignal(
     val top: Int,
     val right: Int,
     val bottom: Int,
+    val parentIndex: Int = -1,
+    val editable: Boolean = false,
+    val className: String = "",
 )
 
 internal class AccessibilityTreeSnapshot internal constructor(
     private val nodes: List<NodeSignal>,
     val truncated: Boolean,
 ) {
+    val nodeCount: Int get() = nodes.size
+
+    private fun NodeSignal.onScreen(viewport: MediaBounds): Boolean = visible &&
+        MediaBounds(left, top, right, bottom).intersect(viewport) != null
+
+    fun hasExactOnScreenId(viewport: MediaBounds, vararg ids: String): Boolean = nodes.any {
+        it.onScreen(viewport) && it.id.substringAfterLast('/') in ids
+    }
+
+    fun hasExactContentId(viewport: MediaBounds, minHeightFraction: Float, vararg ids: String): Boolean = nodes.any {
+        val bounds = MediaBounds(it.left, it.top, it.right, it.bottom).intersect(viewport)
+        it.onScreen(viewport) && it.id.substringAfterLast('/') in ids && bounds != null &&
+            bounds.width >= viewport.width * 0.55f && bounds.height >= viewport.height * minHeightFraction
+    }
+
+    /** Composer + history must belong to one visible content subtree, not cached parallel pages. */
+    fun hasConversation(viewport: MediaBounds): Boolean {
+        val composers = nodes.withIndex().filter { (_, node) ->
+            node.onScreen(viewport) && node.editable && node.id.substringAfterLast('/') in COMPOSER_IDS
+        }
+        return composers.any { (composerIndex, composer) ->
+            nodes.withIndex().any { (historyIndex, history) ->
+                val bounds = MediaBounds(history.left, history.top, history.right, history.bottom).intersect(viewport)
+                history.onScreen(viewport) && history.id.substringAfterLast('/') in HISTORY_IDS &&
+                    bounds != null && bounds.width >= viewport.width * 0.55f && bounds.height >= 48 &&
+                    history.top < composer.bottom && sharedContentParent(composerIndex, historyIndex, viewport)
+            }
+        }
+    }
+
+    private fun sharedContentParent(first: Int, second: Int, viewport: MediaBounds): Boolean {
+        fun path(index: Int): List<Int> {
+            val result = mutableListOf<Int>()
+            var current = index
+            while (current in nodes.indices && current !in result) {
+                result.add(current)
+                current = nodes[current].parentIndex
+            }
+            return result
+        }
+        val firstPath = path(first)
+        val secondPath = path(second)
+        val common = firstPath.drop(1).firstOrNull { it in secondPath.drop(1) } ?: return false
+        if (nodes[common].parentIndex < 0 || !nodes[common].onScreen(viewport) ||
+            nodes[common].className.contains("ViewPager", ignoreCase = true)) return false
+        if (firstPath.takeWhile { it != common }.any { !nodes[it].onScreen(viewport) } ||
+            secondPath.takeWhile { it != common }.any { !nodes[it].onScreen(viewport) }) return false
+        val firstBranch = nodes[firstPath[firstPath.indexOf(common) - 1]]
+        val secondBranch = nodes[secondPath[secondPath.indexOf(common) - 1]]
+        // Two large sibling pages are not one chat, even below DecorView/content wrappers.
+        return !(firstBranch.height >= viewport.height * 0.50f && secondBranch.height >= viewport.height * 0.50f)
+    }
+
+    /** No text, labels or account content; enough structure to diagnose from the phone. */
+    fun structuralReport(): List<String> = nodes.withIndex().filter { it.value.id.isNotBlank() }
+        .take(160).map { (index, n) ->
+            "$index parent=${n.parentIndex} ${n.id.substringAfterLast('/')} " +
+                "bounds=${n.left},${n.top},${n.right},${n.bottom} visible=${n.visible} " +
+                "selected=${n.selected} editable=${n.editable} scrollable=${n.scrollable}"
+        }
     fun hasId(vararg fragments: String): Boolean = nodes.any { node ->
         fragments.any { fragment -> node.id.contains(fragment.normalized()) }
     }
@@ -121,22 +184,27 @@ internal class AccessibilityTreeSnapshot internal constructor(
 
     companion object {
         private const val MAX_NODES = 1200
+        val COMPOSER_IDS = setOf("row_thread_composer_edittext", "direct_thread_composer_edittext",
+            "message_composer_edit_text", "message_composer")
+        val HISTORY_IDS = setOf("message_list", "direct_thread_message_list", "direct_thread_message_list_recycler_view",
+            "direct_thread_recycler_view", "direct_thread_recyclerview", "direct_thread_list")
 
-        fun from(vararg roots: AccessibilityNodeInfo): AccessibilityTreeSnapshot {
-            val queue = ArrayDeque<AccessibilityNodeInfo>()
+        fun from(vararg roots: AccessibilityNodeInfo, includeLabels: Boolean = true): AccessibilityTreeSnapshot {
+            val queue = ArrayDeque<Pair<AccessibilityNodeInfo, Int>>()
             val signals = mutableListOf<NodeSignal>()
             val visited = HashSet<AccessibilityNodeInfo>()
-            roots.forEach(queue::addLast)
+            roots.forEach { queue.addLast(it to -1) }
+            var incomplete = false
 
             while (queue.isNotEmpty() && signals.size < MAX_NODES) {
-                val node = queue.removeFirst()
+                val (node, parentIndex) = queue.removeFirst()
                 if (!visited.add(node)) continue
                 val bounds = Rect()
                 node.getBoundsInScreen(bounds)
-                val label = sequenceOf(node.contentDescription, node.text)
+                val label = if (includeLabels) sequenceOf(node.contentDescription, node.text)
                     .filterNotNull()
                     .joinToString(" ")
-                    .normalized()
+                    .normalized() else ""
 
                 signals += NodeSignal(
                     id = node.viewIdResourceName.orEmpty().normalized(),
@@ -150,16 +218,20 @@ internal class AccessibilityTreeSnapshot internal constructor(
                     top = bounds.top,
                     right = bounds.right,
                     bottom = bounds.bottom,
+                    parentIndex = parentIndex,
+                    editable = node.isEditable,
+                    className = node.className?.toString().orEmpty(),
                 )
 
                 for (index in 0 until node.childCount) {
-                    node.getChild(index)?.let(queue::addLast)
+                    val child = node.getChild(index)
+                    if (child == null) incomplete = true else queue.addLast(child to signals.lastIndex)
                 }
             }
 
             return AccessibilityTreeSnapshot(
                 nodes = signals,
-                truncated = queue.isNotEmpty(),
+                truncated = incomplete || queue.isNotEmpty(),
             )
         }
     }
