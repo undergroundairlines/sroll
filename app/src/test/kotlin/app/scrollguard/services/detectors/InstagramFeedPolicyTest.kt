@@ -230,6 +230,100 @@ class InstagramFeedPolicyTest {
         assertEquals(InstagramScreen.REELS, screen(*nodes.toTypedArray()))
     }
 
+    @Test fun missingMessageRowsDoNotTurnACurrentConversationIntoUnknown() {
+        val tree = AccessibilityTreeSnapshot(conversationNodes(), true, incompleteParents = setOf(2))
+        assertEquals(InstagramScreen.MESSAGES, InstagramFeedPolicy.evaluate(InstagramProtectionMode.FEED_LOCK, tree, viewport))
+    }
+
+    @Test fun unreadRowsNestedWithinMessageHistoryDoNotRelockChat() {
+        val nodes = conversationNodes() + node("message_row", parent = 2)
+        val tree = AccessibilityTreeSnapshot(nodes, true, incompleteParents = setOf(4))
+        assertEquals(InstagramScreen.MESSAGES, InstagramFeedPolicy.evaluate(InstagramProtectionMode.FEED_LOCK, tree, viewport))
+    }
+
+    @Test fun gapsAtRootOrUnknownParallelPageCannotUseChatAsABypass() {
+        for (gap in listOf(0, 1, 4)) {
+            val nodes = conversationNodes() + node("unknown_page", viewport, parent = 0)
+            val tree = AccessibilityTreeSnapshot(nodes, true, incompleteParents = setOf(gap))
+            assertEquals(InstagramScreen.UNKNOWN, InstagramFeedPolicy.evaluate(InstagramProtectionMode.FEED_LOCK, tree, viewport))
+        }
+    }
+
+    @Test fun aPartialChatStillRelocksIfItsCurrentComposerDisappears() {
+        val nodes = conversationNodes().filterIndexed { i, _ -> i != 3 }
+        val tree = AccessibilityTreeSnapshot(nodes, true, incompleteParents = setOf(2))
+        assertEquals(InstagramScreen.UNKNOWN, InstagramFeedPolicy.evaluate(InstagramProtectionMode.FEED_LOCK, tree, viewport))
+    }
+
+    @Test fun inlineReelMediaBelongingToMessageHistoryDoesNotBlockTexting() {
+        val nodes = conversationNodes() + node("clips_video_container", viewport, parent = 2)
+        assertEquals(InstagramScreen.MESSAGES, screen(*nodes.toTypedArray()))
+    }
+
+    @Test fun externalReelViewerWinsEvenWhenSomeMessageRowsAreUnavailable() {
+        val nodes = conversationNodes() + node("clips_viewer_view_pager", viewport, parent = 0)
+        val tree = AccessibilityTreeSnapshot(nodes, true, incompleteParents = setOf(2))
+        assertEquals(InstagramScreen.REELS, InstagramFeedPolicy.evaluate(InstagramProtectionMode.FEED_LOCK, tree, viewport))
+    }
+
+    @Test fun tallChatWrappersInsideAnExactThreadAreStillOneConversation() {
+        val nodes = listOf(node("root", viewport), node("direct_thread", viewport, parent = 0),
+            node("history_wrapper", viewport, parent = 1), node("composer_wrapper", viewport, parent = 1),
+            node("message_list", parent = 2),
+            node("row_thread_composer_edittext", MediaBounds(0, 1400, 720, 1500), parent = 3, editable = true),
+            node("clips_video_container", viewport, parent = 4))
+        assertEquals(InstagramScreen.MESSAGES, screen(*nodes.toTypedArray()))
+    }
+
+    private fun foregroundStoryNodes(storyOrder: Int = 2, homeOrder: Int = 1) = listOf(
+        node("root", viewport),
+        node("feed_recycler_view", viewport, parent = 0).copy(drawingOrder = homeOrder),
+        node("reel_viewer", viewport, parent = 0).copy(drawingOrder = storyOrder),
+        node("reel_viewer_progress_bar", MediaBounds(0, 20, 720, 40), parent = 2),
+        node("reel_viewer_title", MediaBounds(0, 40, 720, 100), parent = 2),
+    )
+
+    @Test fun foregroundStoryWithRetainedHomeRemainsAllowed() {
+        assertEquals(InstagramScreen.STORY, screen(*foregroundStoryNodes().toTypedArray()))
+        assertEquals(InstagramScreen.STORY, screen(*foregroundStoryNodes(0, 0).toTypedArray()))
+    }
+
+    @Test fun cachedStoryBehindCurrentHomeCannotUnlockHome() {
+        assertEquals(InstagramScreen.HOME, screen(*foregroundStoryNodes(1, 2).toTypedArray()))
+    }
+
+    @Test fun storyDrawingOrderProofDoesNotNeedEveryProgressControlDuringAdvance() {
+        assertEquals(InstagramScreen.STORY, screen(*foregroundStoryNodes().take(3).toTypedArray()))
+        assertEquals(InstagramScreen.HOME, screen(*foregroundStoryNodes(0, 0).take(3).toTypedArray()))
+    }
+
+    @Test fun reelMediaResharedWithinAStoryDoesNotBlockTheStory() {
+        val nodes = foregroundStoryNodes() + node("clips_video_container", viewport, parent = 2)
+        assertEquals(InstagramScreen.STORY, screen(*nodes.toTypedArray()))
+    }
+
+    @Test fun retainedHomeReelBehindStoryDoesNotBlockItsForegroundViewer() {
+        val nodes = foregroundStoryNodes() + node("clips_video_container", viewport, parent = 1)
+        assertEquals(InstagramScreen.STORY, screen(*nodes.toTypedArray()))
+    }
+
+    @Test fun missingStoryMediaDescendantsDoNotBlockAnIdentifiedStory() {
+        val tree = AccessibilityTreeSnapshot(foregroundStoryNodes(), true, incompleteParents = setOf(2))
+        assertEquals(InstagramScreen.STORY, InstagramFeedPolicy.evaluate(InstagramProtectionMode.FEED_LOCK, tree, viewport))
+    }
+
+    @Test fun aRootGapOrExternalReelCannotBeHiddenByAStory() {
+        val nodes = foregroundStoryNodes()
+        assertEquals(InstagramScreen.UNKNOWN, InstagramFeedPolicy.evaluate(InstagramProtectionMode.FEED_LOCK,
+            AccessibilityTreeSnapshot(nodes, true, incompleteParents = setOf(0)), viewport))
+        assertEquals(InstagramScreen.REELS, screen(*(nodes + node("reels_viewer", viewport, parent = 0).copy(drawingOrder = 3)).toTypedArray()))
+    }
+
+    @Test fun storyControlIdsWithoutTheViewerDoNotOpenTheFeed() {
+        assertEquals(InstagramScreen.HOME, screen(node("feed_recycler_view", viewport),
+            node("reel_viewer_progress_bar"), node("reel_viewer_title")))
+    }
+
     @Test fun aFullReelViewerAlsoLocksWhenProfileOrStoryMarkersRemain() {
         for (safeNodes in listOf(
             listOf(node("row_profile_header"), node("profile_user_info_compose_view")),

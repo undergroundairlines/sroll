@@ -33,6 +33,7 @@ data class ProtectionRuntimeState(
     val lastInstagram: InstagramObservation? = null,
     val transitions: List<String> = emptyList(),
     val device: String = "",
+    val overlayAttachmentCount: Long = 0,
 )
 
 /** Local structural metadata only. A historical check never asserts current enforcement. */
@@ -70,6 +71,7 @@ object ProtectionRuntime {
         mutableState.update { it.copy(lastAction = description, actionAtMillis = now,
             transitions = (it.transitions + "$now action=$description").takeLast(16)) }
     }
+    fun overlayAttached() { mutableState.update { it.copy(overlayAttachmentCount = it.overlayAttachmentCount + 1) } }
     fun report(): String = state.value.let { s -> buildString {
         appendLine("Scroll Guard ${app.scrollguard.BuildConfig.VERSION_NAME} (${app.scrollguard.BuildConfig.VERSION_CODE})")
         appendLine("${s.device}; report at ${System.currentTimeMillis()} (Unix milliseconds)")
@@ -77,6 +79,7 @@ object ProtectionRuntime {
         appendLine("Instagram enabled=${s.instagramEnabled}; mode=${s.instagramMode}")
         appendLine("Current foreground=${s.foregroundPackage}; window=${s.foregroundWindowId}; checked=${s.checkedAtMillis}")
         appendLine("Current root=${s.rootState}; classification=${s.screen}; overlay=${s.overlay}")
+        appendLine("Shield attachment requests in this process=${s.overlayAttachmentCount}")
         appendLine("Last action=${s.lastAction}; at=${s.actionAtMillis}")
         appendLine("Attachment is observed locally. Touch enforcement on this phone is not measured by this report.")
         s.lastInstagram?.let {

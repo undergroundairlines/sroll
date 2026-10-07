@@ -10,6 +10,7 @@ import android.view.View
 import android.view.accessibility.AccessibilityEvent
 import android.widget.Button
 import android.widget.EditText
+import android.widget.FrameLayout
 import android.widget.LinearLayout
 import android.widget.ScrollView
 import android.widget.TextView
@@ -44,8 +45,8 @@ class MainActivity : Activity() {
     @Deprecated("Synthetic fixture uses an explicit screen stack")
     override fun onBackPressed() {
         when (currentScreen) {
-            "conversation", "shared_reel" -> render(if (currentScreen == "shared_reel") "conversation" else "messages")
-            "messages", "profile", "story" -> render("home")
+            "conversation", "conversation_scrolling", "shared_reel" -> render(if (currentScreen == "shared_reel") "conversation" else "messages")
+            "messages", "profile", "story", "story_retained_home" -> render("home")
             else -> super.onBackPressed()
         }
     }
@@ -95,10 +96,10 @@ class MainActivity : Activity() {
                     handler.postDelayed({ render("home", suppressChildEvents = true) }, 700L)
                 }
             }
-            "conversation", "conversation_immediate" -> {
+            "conversation", "conversation_immediate", "conversation_scrolling" -> {
                 body.addView(label("Fixture conversation"))
                 val history = LinearLayout(this).apply {
-                    id = R.id.message_list
+                    if (screen != "conversation_scrolling") id = R.id.message_list
                     orientation = LinearLayout.VERTICAL
                     importantForAccessibility = View.IMPORTANT_FOR_ACCESSIBILITY_YES
                 }
@@ -112,7 +113,28 @@ class MainActivity : Activity() {
                     else handler.postDelayed({ render("shared_reel") }, 250L)
                 }
                 action("Open contact profile", history) { render("profile") }
-                body.addView(history, LinearLayout.LayoutParams(-1, 0, 1f))
+                if (screen == "conversation_scrolling") {
+                    val probe = TransientTreeProbe(this).apply { id = R.id.fixture_tree_probe }
+                    // A virtual child disappears only within verified message history;
+                    // composer/navigation outside this subtree remain complete.
+                    history.addView(probe, 0, LinearLayout.LayoutParams(-1, 2))
+                    // Inline preview can fill the small message viewport without being a
+                    // standalone Reel viewer. It must not lock an otherwise confirmed chat.
+                    history.addView(label("Shared Reel preview", R.id.clips_video_container).apply {
+                        minHeight = 170
+                    }, 1)
+                    repeat(30) { history.addView(label("Synthetic message $it")) }
+                    val scroll = ScrollView(this).apply { id = R.id.message_list; addView(history) }
+                    body.addView(scroll, LinearLayout.LayoutParams(-1, 0, 1f))
+                    val scrollStatus = label("Message scroll: 0; incomplete changes: 0", R.id.fixture_message_scroll_status)
+                    scrollStatus.textSize = 12f
+                    scrollStatus.setPadding(0, 0, 0, 0)
+                    body.addView(scrollStatus)
+                    scroll.setOnScrollChangeListener { _, _, y, _, _ ->
+                        probe.unavailableDuringScroll()
+                        scrollStatus.text = "Message scroll: $y; incomplete changes: ${probe.changeCount}"
+                    }
+                } else body.addView(history, LinearLayout.LayoutParams(-1, 0, 1f))
                 val sent = label("Sent: 0", R.id.fixture_sent_status)
                 body.addView(sent)
                 val composer = EditText(this).apply {
@@ -142,6 +164,38 @@ class MainActivity : Activity() {
             "story" -> {
                 body.id = R.id.reel_viewer
                 body.addView(label("Fixture story"))
+            }
+            "story_retained_home" -> {
+                val pages = FrameLayout(this)
+                val retainedHome = LinearLayout(this).apply {
+                    id = R.id.feed_recycler_view
+                    orientation = LinearLayout.VERTICAL
+                    importantForAccessibility = View.IMPORTANT_FOR_ACCESSIBILITY_YES
+                    addView(label("Retained Home header", R.id.row_feed_profile_header))
+                }
+                pages.addView(retainedHome, FrameLayout.LayoutParams(-1, -1))
+                val viewer = LinearLayout(this).apply {
+                    id = R.id.reel_viewer
+                    orientation = LinearLayout.VERTICAL
+                    importantForAccessibility = View.IMPORTANT_FOR_ACCESSIBILITY_YES
+                    setBackgroundColor(android.graphics.Color.DKGRAY)
+                    addView(label("Story progress", R.id.reel_viewer_progress_bar).apply {
+                        textSize = 8f
+                        setPadding(0, 0, 0, 0)
+                    })
+                    addView(label("Synthetic story owner", R.id.reel_viewer_title).apply {
+                        textSize = 12f
+                        setPadding(0, 0, 0, 0)
+                    })
+                    addView(label("Fixture story"))
+                }
+                var story = 1
+                val progress = label("Story: 1", R.id.fixture_story_progress)
+                viewer.addView(progress)
+                action("Next Story", viewer) { progress.text = "Story: ${++story}" }
+                action("Return Home", viewer) { render("home") }
+                pages.addView(viewer, FrameLayout.LayoutParams(-1, -1))
+                body.addView(pages, LinearLayout.LayoutParams(-1, -1))
             }
             "reels", "shared_reel" -> {
                 body.id = R.id.clips_viewer_view_pager

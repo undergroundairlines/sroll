@@ -18,7 +18,7 @@ privacy configuration, visual theme, application identity, and TikTok support ha
 - Optional **Allow posts and shared Reels** mode: recognised ordinary Home posts stay usable; known embedded Reels and Explore stay locked
 - Shared viewers reached directly from a confirmed conversation can play behind a transparent touch shield; swiping onward and Instagram taps remain blocked
 - Lock-screen buttons open native messages and the user's profile without temporarily unlocking Home
-- Unknown, missing and incomplete Instagram interfaces stay blocked
+- Unknown/missing screen identities stay blocked; a missing message row does not invalidate an otherwise confirmed chat
 - Optional whole-Instagram block, with a package-level Home action and no UI allowlist
 - If the touch shield cannot attach, the service leaves Instagram instead of allowing the feed
 - Foreground-window watchdog catches silent transitions and removes the shield outside Instagram
@@ -52,7 +52,21 @@ The optional **Allow posts and shared Reels** mode responds to the preference fo
 messaging. It allows a recognised Home container unless visible Reel media is identified. It cannot
 distinguish friends' posts from recommendations, or reliably catch a Reel whose private identifiers
 Instagram omits. It is explicitly labelled **best effort**; use feed lock or whole-app lock for the
-stronger fallback. Unknown and incomplete screens remain locked in every mode.
+stronger fallback. Unknown screen identities remain locked in every mode.
+
+In 0.4.2, message scrolling does not require every message descendant to remain available.
+The current history and editable composer must still identify the same chat, but missing/unread
+children confined to that history (or an exact inbox/thread container) do not attach the shield.
+Gaps at the page/root or disappearance of the current chat anchors still restore protection.
+Reel previews inside verified message history are message content; separate Reel browsing viewers
+remain protected. There is no timer that blindly leaves a previous safe screen unlocked.
+
+Stories take priority over retained background Home nodes when a current large Story viewer and
+its controls or sibling drawing order identify the foreground surface. Story media, including a
+reshared Reel, does not trigger feed blocking. Cached Story content known to be behind Home cannot
+unlock Home. Whole-Instagram mode intentionally has no exceptions. These resource interpretations
+remain private-interface compatibility assumptions, so a phone report is still needed for an
+unrecognised Instagram variant.
 
 In this mode a positive shared-media click inside a confirmed conversation can enter the transparent
 viewer shield. If Instagram destroys the clicked accessibility source before its event arrives,
@@ -69,8 +83,8 @@ and contain no captions, messages, usernames, or account content.
 
 ## Install a test build
 
-1. Download the supplied `scroll-guard-0.4.1.apk` on the phone and install **over** the existing app.
-   Do not uninstall or clear data. The package is `app.scrollguard`, versionCode **401**.
+1. Download the supplied `scroll-guard-0.4.2.apk` on the phone and install **over** the existing app.
+   Do not uninstall or clear data. The package is `app.scrollguard`, versionCode **402**.
 2. On recent Android versions, open **App info** for Scroll Guard. If Android blocks the
    accessibility permission for a sideloaded app, open the three-dot menu and choose
    **Allow restricted settings**.

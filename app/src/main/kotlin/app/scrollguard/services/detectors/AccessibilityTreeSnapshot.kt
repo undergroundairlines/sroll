@@ -28,11 +28,13 @@ internal data class NodeSignal(
     val parentIndex: Int = -1,
     val editable: Boolean = false,
     val className: String = "",
+    val drawingOrder: Int = 0,
 )
 
 internal class AccessibilityTreeSnapshot internal constructor(
     private val nodes: List<NodeSignal>,
     val truncated: Boolean,
+    private val incompleteParents: Set<Int> = emptySet(),
 ) {
     val nodeCount: Int get() = nodes.size
 
@@ -50,18 +52,20 @@ internal class AccessibilityTreeSnapshot internal constructor(
     }
 
     /** Composer + history must belong to one visible content subtree, not cached parallel pages. */
-    fun hasConversation(viewport: MediaBounds): Boolean {
+    fun hasConversation(viewport: MediaBounds): Boolean = conversationHistories(viewport).isNotEmpty()
+
+    private fun conversationHistories(viewport: MediaBounds): Set<Int> {
         val composers = nodes.withIndex().filter { (_, node) ->
             node.onScreen(viewport) && node.editable && node.id.substringAfterLast('/') in COMPOSER_IDS
         }
-        return composers.any { (composerIndex, composer) ->
-            nodes.withIndex().any { (historyIndex, history) ->
+        return nodes.withIndex().filter { (historyIndex, history) ->
+            composers.any { (composerIndex, composer) ->
                 val bounds = MediaBounds(history.left, history.top, history.right, history.bottom).intersect(viewport)
                 history.onScreen(viewport) && history.id.substringAfterLast('/') in HISTORY_IDS &&
                     bounds != null && bounds.width >= viewport.width * 0.55f && bounds.height >= 48 &&
                     history.top < composer.bottom && sharedContentParent(composerIndex, historyIndex, viewport)
             }
-        }
+        }.map { it.index }.toSet()
     }
 
     private fun sharedContentParent(first: Int, second: Int, viewport: MediaBounds): Boolean {
@@ -84,7 +88,84 @@ internal class AccessibilityTreeSnapshot internal constructor(
         val firstBranch = nodes[firstPath[firstPath.indexOf(common) - 1]]
         val secondBranch = nodes[secondPath[secondPath.indexOf(common) - 1]]
         // Two large sibling pages are not one chat, even below DecorView/content wrappers.
-        return !(firstBranch.height >= viewport.height * 0.50f && secondBranch.height >= viewport.height * 0.50f)
+        val anchoredThread = nodes[common].id.substringAfterLast('/') == "direct_thread"
+        return anchoredThread || !(firstBranch.height >= viewport.height * 0.50f && secondBranch.height >= viewport.height * 0.50f)
+    }
+
+    private fun ancestors(index: Int): List<Int> {
+        val path = mutableListOf<Int>()
+        var current = index
+        while (current in nodes.indices && current !in path) {
+            path.add(current)
+            current = nodes[current].parentIndex
+        }
+        return path
+    }
+
+    private fun contentIndices(viewport: MediaBounds, fraction: Float, ids: Set<String>, exact: Boolean = true): Set<Int> =
+        nodes.withIndex().filter { (_, n) ->
+            val bounds = MediaBounds(n.left, n.top, n.right, n.bottom).intersect(viewport)
+            n.onScreen(viewport) && bounds != null && bounds.width >= viewport.width * 0.55f &&
+                bounds.height >= viewport.height * fraction && ids.any {
+                    if (exact) n.id.substringAfterLast('/') == it else n.id.substringAfterLast('/').startsWith(it)
+                }
+        }.map { it.index }.toSet()
+
+    /** Android drawing order is relative to siblings only. Compare branches at their common parent. */
+    private fun behind(first: Int, second: Int): Boolean {
+        val a = ancestors(first)
+        val b = ancestors(second)
+        val common = a.firstOrNull { it in b } ?: return false
+        val ai = a.indexOf(common)
+        val bi = b.indexOf(common)
+        if (ai < 1 || bi < 1) return false
+        val left = nodes[a[ai - 1]].drawingOrder
+        val right = nodes[b[bi - 1]].drawingOrder
+        return left > 0 && right > left
+    }
+
+    private fun storyViewers(viewport: MediaBounds): Set<Int> =
+        contentIndices(viewport, 0.40f, STORY_IDS, exact = false)
+
+    private fun homeNodes(viewport: MediaBounds): Set<Int> = nodes.withIndex().filter { (_, n) ->
+        n.onScreen(viewport) && (n.id.substringAfterLast('/').startsWith("feed_recycler_view") ||
+            n.id.substringAfterLast('/').startsWith("row_feed_profile_header"))
+    }.map { it.index }.toSet()
+
+    private fun foregroundStories(viewport: MediaBounds): Set<Int> {
+        val homes = homeNodes(viewport)
+        return storyViewers(viewport).filter { viewer ->
+            val controls = nodes.withIndex().filter { (index, n) -> n.onScreen(viewport) && viewer in ancestors(index) }
+            val hasProgress = controls.any { it.value.id.substringAfterLast('/') == "reel_viewer_progress_bar" }
+            val hasHeader = controls.any { it.value.id.substringAfterLast('/') == "reel_viewer_title" }
+            homes.none { behind(viewer, it) } &&
+                (homes.isEmpty() || homes.all { behind(it, viewer) } || (hasProgress && hasHeader))
+        }.toSet()
+    }
+
+    fun hasForegroundStory(viewport: MediaBounds): Boolean = foregroundStories(viewport).isNotEmpty()
+
+    /** A partial message row is not a partial screen identity. Never ignore gaps at the page/root. */
+    fun contentGapsAreSafe(screen: InstagramScreen, viewport: MediaBounds): Boolean {
+        if (!truncated) return true
+        val owners = when (screen) {
+            InstagramScreen.MESSAGES -> conversationHistories(viewport) +
+                contentIndices(viewport, 0.30f, setOf("direct_thread", "direct_inbox", "inbox_refreshable_thread_list_recyclerview"))
+            InstagramScreen.STORY -> foregroundStories(viewport)
+            else -> emptySet()
+        }
+        return incompleteParents.isNotEmpty() && incompleteParents.all { gap ->
+            ancestors(gap).any { it in owners }
+        }
+    }
+
+    /** Media in message history/Stories is preview content, not evidence of a separate scrolling feed. */
+    fun hasExternalMedia(viewport: MediaBounds, fraction: Float, vararg ids: String): Boolean {
+        val histories = conversationHistories(viewport)
+        val stories = foregroundStories(viewport)
+        return contentIndices(viewport, fraction, ids.toSet(), exact = false).any { index ->
+            ancestors(index).none { it in histories || it in stories } && stories.none { behind(index, it) }
+        }
     }
 
     /** No text, labels or account content; enough structure to diagnose from the phone. */
@@ -92,7 +173,7 @@ internal class AccessibilityTreeSnapshot internal constructor(
         .take(160).map { (index, n) ->
             "$index parent=${n.parentIndex} ${n.id.substringAfterLast('/')} " +
                 "bounds=${n.left},${n.top},${n.right},${n.bottom} visible=${n.visible} " +
-                "selected=${n.selected} editable=${n.editable} scrollable=${n.scrollable}"
+                "selected=${n.selected} editable=${n.editable} scrollable=${n.scrollable} draw=${n.drawingOrder}"
         }
     fun hasId(vararg fragments: String): Boolean = nodes.any { node ->
         fragments.any { fragment -> node.id.contains(fragment.normalized()) }
@@ -188,6 +269,7 @@ internal class AccessibilityTreeSnapshot internal constructor(
             "message_composer_edit_text", "message_composer")
         val HISTORY_IDS = setOf("message_list", "direct_thread_message_list", "direct_thread_message_list_recycler_view",
             "direct_thread_recycler_view", "direct_thread_recyclerview", "direct_thread_list")
+        private val STORY_IDS = setOf("story_viewer", "stories_viewer", "reel_viewer")
 
         fun from(vararg roots: AccessibilityNodeInfo, includeLabels: Boolean = true): AccessibilityTreeSnapshot {
             val queue = ArrayDeque<Pair<AccessibilityNodeInfo, Int>>()
@@ -195,6 +277,7 @@ internal class AccessibilityTreeSnapshot internal constructor(
             val visited = HashSet<AccessibilityNodeInfo>()
             roots.forEach { queue.addLast(it to -1) }
             var incomplete = false
+            val incompleteParents = mutableSetOf<Int>()
 
             while (queue.isNotEmpty() && signals.size < MAX_NODES) {
                 val (node, parentIndex) = queue.removeFirst()
@@ -221,17 +304,22 @@ internal class AccessibilityTreeSnapshot internal constructor(
                     parentIndex = parentIndex,
                     editable = node.isEditable,
                     className = node.className?.toString().orEmpty(),
+                    drawingOrder = node.drawingOrder,
                 )
 
                 for (index in 0 until node.childCount) {
                     val child = node.getChild(index)
-                    if (child == null) incomplete = true else queue.addLast(child to signals.lastIndex)
+                    if (child == null) {
+                        incomplete = true
+                        incompleteParents.add(signals.lastIndex)
+                    } else queue.addLast(child to signals.lastIndex)
                 }
             }
 
             return AccessibilityTreeSnapshot(
                 nodes = signals,
                 truncated = incomplete || queue.isNotEmpty(),
+                incompleteParents = incompleteParents + queue.map { it.second },
             )
         }
     }

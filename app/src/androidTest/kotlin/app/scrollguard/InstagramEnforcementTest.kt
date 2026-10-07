@@ -16,6 +16,9 @@ import app.scrollguard.services.ProtectionRuntime
 import app.scrollguard.utils.StrictModePolicy
 import app.scrollguard.utils.UserPreferencesProvider
 import kotlinx.coroutines.flow.first
+import kotlinx.coroutines.flow.collect
+import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.launch
 import kotlinx.coroutines.runBlocking
 import org.junit.After
 import org.junit.Assert.assertEquals
@@ -27,6 +30,7 @@ import org.junit.Rule
 import org.junit.rules.TestName
 import org.junit.runner.RunWith
 import java.io.File
+import java.util.concurrent.atomic.AtomicBoolean
 
 /** Exercises the real service, system overlay, touch dispatch and lifecycle on an emulator.
  * The synthetic UI proves enforcement mechanics; it is not a test of Instagram's private UI. */
@@ -207,6 +211,79 @@ class InstagramEnforcementTest {
         awaitLock()
         repeatFeedTouches()
         assertEquals("Scroll: 0; clicks: 0", fixtureStatus())
+    }
+
+    @Test fun scrollingMessagesWithInlineReelAndIncompleteHistoryNeverAttachesShield() = runBlocking {
+        open("conversation_scrolling")
+        assertTrue(device.wait(Until.hasObject(By.text("Fixture conversation")), 8_000L))
+        assertUnlocked()
+        assertTrue(device.hasObject(By.res("com.instagram.android", "clips_video_container")))
+        val attachmentCount = ProtectionRuntime.state.value.overlayAttachmentCount
+        val startedAt = System.currentTimeMillis()
+        val observedIncomplete = AtomicBoolean(false)
+        val observer = launch(Dispatchers.Default) {
+            ProtectionRuntime.state.collect { state ->
+                if (state.checkedAtMillis >= startedAt && state.foregroundPackage == "com.instagram.android" &&
+                    state.rootState.startsWith("Incomplete")) observedIncomplete.set(true)
+            }
+        }
+        try {
+            repeat(8) { index ->
+                val history = requireNotNull(device.findObject(By.res("com.instagram.android", "message_list"))).visibleBounds
+                val upper = history.top + history.height() / 4
+                val lower = history.top + history.height() * 3 / 4
+                device.swipe(history.centerX(), if (index % 2 == 0) lower else upper,
+                    history.centerX(), if (index % 2 == 0) upper else lower, 20)
+                assertFalse("Message scrolling flashed the shield: ${ProtectionRuntime.report()}", device.hasObject(guardTitle))
+                assertEquals("No attachment attempt is permitted during confirmed message scrolling: ${ProtectionRuntime.report()}",
+                    attachmentCount, ProtectionRuntime.state.value.overlayAttachmentCount)
+            }
+            val scrollStatus = device.findObject(By.res("com.instagram.android", "fixture_message_scroll_status")).text
+            assertFalse("Gestures must actually change message history: $scrollStatus", scrollStatus.endsWith("incomplete changes: 0"))
+            awaitCondition { observedIncomplete.get() }
+            typeAndSendMessage()
+            assertEquals("Typing must not attach a shield: ${ProtectionRuntime.report()}",
+                attachmentCount, ProtectionRuntime.state.value.overlayAttachmentCount)
+        } finally {
+            observer.cancel()
+        }
+        device.findObject(By.res("com.instagram.android", "feed_tab")).click()
+        awaitLock()
+        repeatFeedTouches()
+        assertEquals("Scroll: 0; clicks: 0", fixtureStatus())
+        open("reels")
+        awaitLock()
+        awaitCondition { ProtectionRuntime.state.value.screen == "Reels locked" }
+        repeatFeedTouches()
+        assertEquals("Scroll: 0; clicks: 0", fixtureStatus())
+    }
+
+    @Test fun foregroundStoryWithRetainedHomeNodesStaysUsableThenHomeRelocks() {
+        for (mode in listOf(InstagramProtectionMode.FEED_LOCK, InstagramProtectionMode.SOCIAL)) {
+            runBlocking { preferences.requestInstagramProtectionMode(mode, System.currentTimeMillis()) }
+            open("story_retained_home")
+            assertTrue(device.wait(Until.hasObject(By.text("Fixture story")), 8_000L))
+            assertUnlocked()
+            val structuralNodes = ProtectionRuntime.state.value.lastInstagram?.structuralNodes.orEmpty()
+            assertTrue("Regression must retain visible background Home structure: ${ProtectionRuntime.report()}",
+                structuralNodes.any { it.contains("feed_recycler_view") && it.contains("visible=true") })
+            val attachmentCount = ProtectionRuntime.state.value.overlayAttachmentCount
+            repeat(3) { device.findObject(By.text("Next Story")).click() }
+            assertTrue(device.wait(Until.hasObject(By.text("Story: 4")), 8_000L))
+            assertUnlocked()
+            assertEquals("Story progress/title metadata must not trigger a Reel shield: ${ProtectionRuntime.report()}",
+                attachmentCount, ProtectionRuntime.state.value.overlayAttachmentCount)
+            device.findObject(By.text("Return Home")).click()
+            if (mode == InstagramProtectionMode.FEED_LOCK) {
+                awaitLock()
+                repeatFeedTouches()
+                assertEquals("Scroll: 0; clicks: 0", fixtureStatus())
+            } else {
+                assertUnlocked()
+                open("home_reel")
+                awaitLock()
+            }
+        }
     }
 
     @Test fun windowEventBurstsStillAttachTouchableShield() {

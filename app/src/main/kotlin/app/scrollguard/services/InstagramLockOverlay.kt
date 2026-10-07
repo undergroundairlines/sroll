@@ -101,6 +101,7 @@ internal class InstagramLockOverlay(
                 view = root
                 attachRequestedAt = SystemClock.uptimeMillis()
                 windows.addView(root, parameters(rect))
+                ProtectionRuntime.overlayAttached()
                 regions.filter { it != rect }.forEach { area ->
                     val extra = FrameLayout(context).apply {
                         isClickable = true

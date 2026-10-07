@@ -9,6 +9,11 @@
     <item name="message_list" type="id" />
     <item name="direct_shared_reel" type="id" />
     <item name="fixture_shared_reel_no_source" type="id" />
+    <item name="fixture_tree_probe" type="id" />
+    <item name="fixture_message_scroll_status" type="id" />
+    <item name="reel_viewer_progress_bar" type="id" />
+    <item name="reel_viewer_title" type="id" />
+    <item name="fixture_story_progress" type="id" />
     <item name="row_thread_composer_edittext" type="id" />
     <item name="row_thread_composer_button_send" type="id" />
     <item name="fixture_sent_status" type="id" />
