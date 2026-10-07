@@ -33,10 +33,11 @@ import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.SupervisorJob
 import kotlinx.coroutines.cancel
-import kotlinx.coroutines.flow.catch
+import kotlinx.coroutines.delay
 import kotlinx.coroutines.flow.combine
 import kotlinx.coroutines.flow.launchIn
 import kotlinx.coroutines.flow.onEach
+import kotlinx.coroutines.flow.retryWhen
 import timber.log.Timber
 import java.util.ArrayDeque
 import java.util.Locale
@@ -107,10 +108,13 @@ class ShortFormContentBlockerService : AccessibilityService() {
                 watchingSharedReel = false
                 ProtectionRuntime.configured(mode, PackageConstants.INSTAGRAM_PACKAGE in enabledPackages)
                 watchdog.run()
-            }.catch {
-                preferencesApplied = false
+            }.retryWhen { failure, _ ->
+                // A transient read error must not discard an already applied configuration.
+                // Keep enforcing that configuration while retrying, without changing stored data.
                 ProtectionRuntime.preferencesFailed()
-                Timber.e(it, "Could not read blocker preferences")
+                Timber.e(failure, "Could not read blocker preferences; retrying")
+                delay(1000L)
+                true
             }.launchIn(scope)
         watchdog.run()
     }
