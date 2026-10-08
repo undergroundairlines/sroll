@@ -96,7 +96,10 @@ class ShortFormContentBlockerService : AccessibilityService() {
                 Timber.e(it, "Protection check failed")
                 shield.hide()
                 ProtectionRuntime.action("Protection check failed; shield removed")
-                if (runCatching { foregroundApplication()?.packageName }.getOrNull() == PackageConstants.INSTAGRAM_PACKAGE)
+                val current = runCatching { foregroundApplication() }.getOrNull()
+                ProtectionRuntime.checked(current?.packageName, current?.windowId ?: -1,
+                    "Check failed", "Protection not confirmed; ${if (instagramMode == InstagramProtectionMode.SOCIAL) "selective mode keeps interface usable" else "request exit if Instagram is confirmed"}", shield.status)
+                if (instagramMode != InstagramProtectionMode.SOCIAL && current?.packageName == PackageConstants.INSTAGRAM_PACKAGE)
                     exitBlockedApp(PackageConstants.INSTAGRAM_PACKAGE, "Protection check failed")
             }
             lastProtectionCheckAt = SystemClock.uptimeMillis()

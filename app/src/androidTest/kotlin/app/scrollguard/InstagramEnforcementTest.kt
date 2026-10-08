@@ -360,7 +360,7 @@ class InstagramEnforcementTest {
         }
     }
 
-    @Test fun socialModeAllowsOrdinaryPostsButBlocksEmbeddedReelsAndUnknownUi() {
+    @Test fun socialModeAllowsOrdinaryPostsButBlocksRecognisedFeeds() {
         runBlocking { preferences.requestInstagramProtectionMode(InstagramProtectionMode.SOCIAL, System.currentTimeMillis()) }
         open("home")
         assertTrue(device.wait(Until.hasObject(By.res("com.instagram.android", "fixture_status")), 8_000L))
@@ -369,12 +369,75 @@ class InstagramEnforcementTest {
         device.swipe(feed.centerX(), feed.top + feed.height() * 3 / 4,
             feed.centerX(), feed.top + feed.height() / 4, 20)
         awaitCondition { fixtureStatus() != "Scroll: 0; clicks: 0" }
-        for (screen in listOf("home_reel", "unknown", "selected_profile")) {
+        for (screen in listOf("home_reel", "reels", "explore")) {
             open(screen)
             awaitLock()
             repeatFeedTouches()
             assertEquals("Scroll: 0; clicks: 0", fixtureStatus())
         }
+    }
+
+    @Test fun selectiveModeAllowsUnknownScreensWithoutRetainingAnOldShield() {
+        open("unknown")
+        awaitLock()
+        runBlocking { preferences.requestInstagramProtectionMode(InstagramProtectionMode.SOCIAL, System.currentTimeMillis()) }
+        awaitCondition { ProtectionRuntime.state.value.instagramMode == InstagramProtectionMode.SOCIAL }
+        assertUnlocked()
+        val baseline = ProtectionRuntime.state.value.overlayAttachmentCount
+        for (screen in listOf("unknown", "selected_profile", "truncated", "empty_tree")) {
+            open(screen)
+            assertUnlocked()
+        }
+        assertEquals("Selective mode must not cover unknown attachment surfaces", baseline,
+            ProtectionRuntime.state.value.overlayAttachmentCount)
+        runBlocking { preferences.requestInstagramProtectionMode(InstagramProtectionMode.FEED_LOCK, System.currentTimeMillis()) }
+        awaitLock()
+    }
+
+    @Test fun selectingEditingAndSendingPhotosDoesNotAttachAPopup() {
+        runBlocking { preferences.requestInstagramProtectionMode(InstagramProtectionMode.SOCIAL, System.currentTimeMillis()) }
+        awaitCondition { ProtectionRuntime.state.value.instagramMode == InstagramProtectionMode.SOCIAL }
+        open("conversation")
+        assertTrue(device.wait(Until.hasObject(By.text("Fixture conversation")), 8_000L))
+        assertUnlocked()
+        val baseline = ProtectionRuntime.state.value.overlayAttachmentCount
+        fun photoCount() = device.findObject(By.res("com.instagram.android", "fixture_photo_sent"))
+            .text.substringAfterLast(' ').toInt()
+        val initialCount = photoCount()
+        for ((index, button) in listOf("fixture_choose_photo", "fixture_take_photo").withIndex()) {
+            device.findObject(By.res("com.instagram.android", button)).click()
+            assertUnlocked()
+            if (button == "fixture_choose_photo") {
+                device.swipe(device.displayWidth / 2, device.displayHeight * 3 / 5,
+                    device.displayWidth / 2, device.displayHeight * 2 / 5, 20)
+                assertUnlocked()
+                device.findObjects(By.textStartsWith("Synthetic photo "))
+                    .first { !it.visibleBounds.isEmpty }.click()
+            } else {
+                device.findObject(By.res("com.instagram.android", "fixture_capture_photo")).click()
+            }
+            assertUnlocked()
+            val caption = requireNotNull(device.wait(Until.findObject(
+                By.res("com.instagram.android", "fixture_photo_caption")), 8_000L))
+            caption.click()
+            caption.text = "Synthetic photo caption"
+            assertUnlocked()
+            device.pressBack()
+            assertUnlocked()
+            device.findObject(By.res("com.instagram.android", "fixture_send_photo")).click()
+            assertTrue(device.wait(Until.hasObject(By.text("Fixture conversation")), 8_000L))
+            assertUnlocked()
+            assertEquals(initialCount + index + 1, photoCount())
+        }
+        typeAndSendMessage()
+        assertEquals("No momentary blocker during gallery, camera, caption or send", baseline,
+            ProtectionRuntime.state.value.overlayAttachmentCount)
+        open("reels")
+        awaitLock()
+        repeatFeedTouches()
+        assertEquals("Scroll: 0; clicks: 0", fixtureStatus())
+        device.pressHome()
+        assertTrue(device.wait(Until.gone(guardTitle), 8_000L))
     }
 
     @Test fun socialModeSharedReelCannotSwipeIntoRecommendationFeed() {

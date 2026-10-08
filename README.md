@@ -15,7 +15,7 @@ privacy configuration, visual theme, application identity, and TikTok support ha
 - Home is locked even when it contains ordinary posts or exposes no Reel identifiers
 - Messages, profiles and Stories allowed only when their visible interface is positively identified
 - Conversations also accept connected message-history and editable-composer structure, including with the keyboard open
-- Optional **Allow posts and shared Reels** mode: recognised ordinary Home posts stay usable; known embedded Reels and Explore stay locked
+- Optional **Block Reels and Explore only** mode: texting, sending photos, Stories and posts stay usable; positively recognised feeds stay locked (best effort)
 - Shared viewers reached directly from a confirmed conversation can play behind a transparent touch shield; swiping onward and Instagram taps remain blocked
 - Lock-screen buttons open native messages, a Story or the user's profile without temporarily unlocking Home
 - Unknown/missing screen identities stay blocked; a missing message row does not invalidate an otherwise confirmed chat
@@ -48,11 +48,20 @@ messages, profile or Story content removes it. Whole-app mode and TikTok use pac
 The default still locks the **entire Home feed, including ordinary posts**. Stored modes and switches
 are preserved during the update; a weaker mode is never silently selected.
 
-The optional **Allow posts and shared Reels** mode responds to the preference for ordinary posts and
-messaging. It allows a recognised Home container unless visible Reel media is identified. It cannot
-distinguish friends' posts from recommendations, or reliably catch a Reel whose private identifiers
-Instagram omits. It is explicitly labelled **best effort**; use feed lock or whole-app lock for the
-stronger fallback. Unknown screen identities remain locked in every mode.
+The optional **Block Reels and Explore only** mode is the selective mode for texting, sending photos,
+Stories, profiles and ordinary posts. In **0.4.3**, it locks only positively identified Reels and Explore
+content. Other screens remain usable even when their tree is missing or incomplete. A selected tab
+alone cannot trigger its popup. This intentionally allows unknown interfaces: unrecognised feeds can
+get through, and it cannot distinguish friends' posts from recommendations. Feed lock still blocks
+every unknown screen and the entire Home feed; whole-app lock remains the strongest fallback.
+
+The photo-sending report exposed a policy gap: earlier versions had no gallery, camera or photo-editor
+exception. These flows can replace the chat's composer/history, so the allowlist could classify them
+as unknown and attach an opaque popup. The user's exact screen structure has not been supplied;
+this is a confirmed omission in the code, not a verified capture of their private Instagram interface.
+Selective mode no longer needs to guess those attachment IDs or retain a timed chat exemption.
+After updating, turn **Block Reels and Explore only** on. Saved modes and Strict Mode are preserved;
+changing from feed lock or whole-app lock still obeys the persistent 30-minute Strict Mode wait.
 
 In 0.4.2, message scrolling does not require every message descendant to remain available.
 The current history and editable composer must still identify the same chat, but missing/unread
@@ -89,8 +98,8 @@ and contain no captions, messages, usernames, or account content.
 
 ## Install a test build
 
-1. Download the supplied `scroll-guard-0.4.2.apk` on the phone and install **over** the existing app.
-   Do not uninstall or clear data. The package is `app.scrollguard`, versionCode **402**.
+1. Download the supplied `scroll-guard-0.4.3.apk` on the phone and install **over** the existing app.
+   Do not uninstall or clear data. The package is `app.scrollguard`, versionCode **403**.
 2. On recent Android versions, open **App info** for Scroll Guard. If Android blocks the
    accessibility permission for a sideloaded app, open the three-dot menu and choose
    **Allow restricted settings**.
@@ -103,7 +112,7 @@ and contain no captions, messages, usernames, or account content.
 
 ## Detector test
 
-1. Start with Instagram on and **Allow posts and shared Reels** off. Check **Phone protection check**.
+1. Start with Instagram on and **Block Reels and Explore only** off. Check **Phone protection check**.
 2. Open Instagram Home. A "Your feed is locked" screen should appear. Repeated swipes must not
    move the feed. This intentionally blocks ordinary Home posts too.
 3. Use **Open messages** or **Open my profile** on the lock. A recognised destination should open.
@@ -115,11 +124,14 @@ and contain no captions, messages, usernames, or account content.
 7. Verify normal YouTube videos are usable and Shorts navigate Back; TikTok should navigate Home.
 8. Open messages, then an individual conversation. Open the keyboard, type and send a message.
    Back out to Home and verify relocking. Repeat after reopening from Recents and screen sleep.
-9. Enable **Allow posts and shared Reels** (after the Strict Mode wait if enabled). Check ordinary
+9. Enable **Block Reels and Explore only** (after the Strict Mode wait if enabled). Check ordinary
    Home posts and Stories, then open a friend's shared Reel from a conversation. If the opaque lock
    appears, use **Watch without scrolling** when offered. Try repeated swipes and taps: they must
    not advance or interact with the viewer. Use **Back to messages** and send another message.
-10. Open the notification shade, keyboard, launcher and another app. No shield may cover them.
+10. In selective mode, choose a gallery photo, scroll the gallery, edit/caption it and send it.
+    Take and send a camera photo too. Text again, advance Stories and open a Reel from a profile.
+    Photos/texting/Stories must have no popup; a recognised Reel viewer must lock scrolling.
+11. Open the notification shade, keyboard, launcher and another app. No shield may cover them.
     If any step fails, return to Scroll Guard and **Copy local diagnostic report**. No video or
     computer is required. Paste the report when asking for a fix; it contains structural metadata,
     not message text, captions, usernames or passwords. No report is sent automatically.

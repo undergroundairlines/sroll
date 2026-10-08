@@ -20,6 +20,7 @@ import android.widget.TextView
 class MainActivity : Activity() {
     private val handler = Handler(Looper.getMainLooper())
     private var currentScreen = "home"
+    private var photosSent = 0
 
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
@@ -46,6 +47,7 @@ class MainActivity : Activity() {
     @Deprecated("Synthetic fixture uses an explicit screen stack")
     override fun onBackPressed() {
         when (currentScreen) {
+            "photo_gallery", "photo_camera", "photo_editor" -> render("conversation")
             "conversation", "conversation_scrolling", "shared_reel" -> render(if (currentScreen == "shared_reel") "conversation" else "messages")
             "messages", "profile", "story", "story_retained_home" -> render("home")
             else -> super.onBackPressed()
@@ -138,6 +140,9 @@ class MainActivity : Activity() {
                 } else body.addView(history, LinearLayout.LayoutParams(-1, 0, 1f))
                 val sent = label("Sent: 0", R.id.fixture_sent_status)
                 body.addView(sent)
+                body.addView(label("Photos sent: $photosSent", R.id.fixture_photo_sent))
+                action("Choose photo", viewId = R.id.fixture_choose_photo) { render("photo_gallery") }
+                action("Take photo", viewId = R.id.fixture_take_photo) { render("photo_camera") }
                 val composer = EditText(this).apply {
                     id = R.id.row_thread_composer_edittext
                     hint = "Message"
@@ -156,6 +161,29 @@ class MainActivity : Activity() {
                         }
                     }
                 })
+            }
+            "photo_gallery", "photo_camera", "photo_editor" -> {
+                // Deliberately no chat/feed resource identifiers. Native attachment flows
+                // can replace the composer/history; account data is unnecessary to test that.
+                body.addView(label("Fixture $screen"))
+                if (screen == "photo_gallery") {
+                    val scroll = ScrollView(this)
+                    val photos = LinearLayout(this).apply { orientation = LinearLayout.VERTICAL }
+                    repeat(30) { index ->
+                        action("Synthetic photo $index", photos) { render("photo_editor") }
+                    }
+                    scroll.addView(photos)
+                    body.addView(scroll, LinearLayout.LayoutParams(-1, 0, 1f))
+                } else if (screen == "photo_camera") {
+                    action("Capture photo", viewId = R.id.fixture_capture_photo) { render("photo_editor") }
+                } else {
+                    val caption = EditText(this).apply { hint = "Caption"; id = R.id.fixture_photo_caption }
+                    body.addView(caption)
+                    action("Send photo", viewId = R.id.fixture_send_photo) {
+                        photosSent++
+                        render("conversation")
+                    }
+                }
             }
             "profile" -> {
                 body.addView(label("Fixture profile", R.id.row_profile_header_imageview_frame_layout))

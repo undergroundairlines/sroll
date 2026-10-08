@@ -381,13 +381,52 @@ class InstagramFeedPolicyTest {
         }
     }
 
-    @Test fun socialModeCannotOpenAnUnknownOrTruncatedHome() {
-        assertEquals(InstagramScreen.UNKNOWN, InstagramFeedPolicy.evaluate(
+    @Test fun selectiveModeDoesNotTurnUnknownPhotoScreensIntoAWholeAppBlock() {
+        assertEquals(InstagramScreen.OTHER_ALLOWED, InstagramFeedPolicy.evaluate(
             InstagramProtectionMode.SOCIAL, AccessibilityTreeSnapshot(listOf(node("renamed_feed")), false), viewport))
-        assertEquals(InstagramScreen.UNKNOWN, InstagramFeedPolicy.evaluate(
+        assertEquals(InstagramScreen.HOME_POSTS, InstagramFeedPolicy.evaluate(
             InstagramProtectionMode.SOCIAL, AccessibilityTreeSnapshot(listOf(node("feed_recycler_view", viewport)), true), viewport))
-        assertEquals(InstagramScreen.HOME, InstagramFeedPolicy.evaluate(
+        assertEquals(InstagramScreen.OTHER_ALLOWED, InstagramFeedPolicy.evaluate(
             InstagramProtectionMode.SOCIAL, AccessibilityTreeSnapshot(listOf(node("feed_tab", selected = true)), false), viewport))
+    }
+
+    @Test fun selectiveModeKeepsMissingAndPartialAttachmentTreesUsable() {
+        for (tree in listOf(null, AccessibilityTreeSnapshot(emptyList(), false),
+            AccessibilityTreeSnapshot(listOf(node("unidentified_picker")), true))) {
+            assertEquals(InstagramScreen.OTHER_ALLOWED,
+                InstagramFeedPolicy.evaluate(InstagramProtectionMode.SOCIAL, tree, viewport))
+            assertEquals(InstagramScreen.UNKNOWN,
+                InstagramFeedPolicy.evaluate(InstagramProtectionMode.FEED_LOCK, tree, viewport))
+            assertEquals(InstagramScreen.APP_LOCK,
+                InstagramFeedPolicy.evaluate(InstagramProtectionMode.APP_LOCK, tree, viewport))
+        }
+    }
+
+    @Test fun staleSelectedReelsOrExploreTabsCannotBlockSendingAPhotoInSelectiveMode() {
+        for (id in listOf("clips_tab", "reels_tab", "explore_tab", "search_tab")) {
+            val tree = AccessibilityTreeSnapshot(listOf(node(id, selected = true), node("photo_editor")), false)
+            assertEquals(InstagramScreen.OTHER_ALLOWED,
+                InstagramFeedPolicy.evaluate(InstagramProtectionMode.SOCIAL, tree, viewport))
+        }
+    }
+
+    @Test fun selectiveModeStillBlocksRecognisedFeedsEvenWithMissingMessageRows() {
+        for ((id, expected) in listOf("reels_viewer" to InstagramScreen.REELS,
+            "clips_viewer_view_pager" to InstagramScreen.REELS,
+            "explore_grid" to InstagramScreen.EXPLORE)) {
+            val tree = AccessibilityTreeSnapshot(conversationNodes() + node(id, viewport, parent = 0),
+                true, incompleteParents = setOf(2))
+            assertEquals(expected, InstagramFeedPolicy.evaluate(InstagramProtectionMode.SOCIAL, tree, viewport))
+        }
+    }
+
+    @Test fun selectiveModeDoesNotBlockSharedPreviewsOrStories() {
+        for ((nodes, expected) in listOf(
+            conversationNodes() + node("clips_video_container", viewport, parent = 2) to InstagramScreen.MESSAGES,
+            foregroundStoryNodes() + node("clips_video_container", viewport, parent = 2) to InstagramScreen.STORY)) {
+            assertEquals(expected, InstagramFeedPolicy.evaluate(InstagramProtectionMode.SOCIAL,
+                AccessibilityTreeSnapshot(nodes, false), viewport))
+        }
     }
 
     @Test fun strongerModeOrderingSupportsStrictModeAndPreservesStoredModes() {

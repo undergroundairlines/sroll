@@ -12,11 +12,12 @@ internal enum class InstagramScreen(val description: String, val allowed: Boolea
     PROFILE("Profile allowed", true),
     MESSAGES("Messages allowed", true),
     STORY("Story allowed", true),
+    OTHER_ALLOWED("Other Instagram screen allowed — selective mode", true),
     UNKNOWN("Unrecognised screen locked"),
     APP_LOCK("Instagram blocked completely"),
 }
 
-/** An allowlist, not a Reel score: missing or conflicting evidence cannot open the feed. */
+/** Feed lock uses an allowlist; selective mode blocks only positively identified feed surfaces. */
 internal object InstagramFeedPolicy {
     fun reason(screen: InstagramScreen, tree: AccessibilityTreeSnapshot?, viewport: MediaBounds): String = when (screen) {
         InstagramScreen.MESSAGES -> if (tree?.hasConversation(viewport) == true)
@@ -29,6 +30,7 @@ internal object InstagramFeedPolicy {
         InstagramScreen.REELS -> "Visible Reel viewer or recognised Home Reel media"
         InstagramScreen.EXPLORE -> "Visible Explore content or selected Explore navigation"
         InstagramScreen.APP_LOCK -> "Whole-app preference; no interface exceptions"
+        InstagramScreen.OTHER_ALLOWED -> "Selective mode: no positively identified Reels or Explore; unknown screens remain usable, including photo selection/editing"
         InstagramScreen.UNKNOWN -> when {
             tree == null -> "No root snapshot in the confirmed Instagram window"
             tree.truncated -> "Incomplete tree cannot grant access"
@@ -41,6 +43,7 @@ internal object InstagramFeedPolicy {
         viewport: MediaBounds,
     ): InstagramScreen {
         if (mode == InstagramProtectionMode.APP_LOCK) return InstagramScreen.APP_LOCK
+        if (mode == InstagramProtectionMode.SOCIAL) return selective(tree, viewport)
         if (tree == null) return InstagramScreen.UNKNOWN
 
         // A visible video/viewer wins over cached profile or inbox nodes. A small preview does
@@ -57,11 +60,6 @@ internal object InstagramFeedPolicy {
         if (tree.truncated && !tree.contentGapsAreSafe(InstagramScreen.MESSAGES, viewport))
             return InstagramScreen.UNKNOWN
         if (tree.hasHomeContent(viewport)) {
-            if (mode == InstagramProtectionMode.SOCIAL &&
-                tree.hasExactOnScreenId(viewport, "clips_video_container", "clips_media_component",
-                    "clips_single_media_component")) return InstagramScreen.REELS
-            if (!tree.truncated && mode == InstagramProtectionMode.SOCIAL &&
-                tree.hasVisibleContentId(viewport, 0.30f, "feed_recycler_view")) return InstagramScreen.HOME_POSTS
             return InstagramScreen.HOME
         }
         if (tree.hasVisibleContentId(viewport, 0.30f, "explore_grid", "explore_recycler_view")) {
@@ -84,5 +82,27 @@ internal object InstagramFeedPolicy {
         if (tree.hasSelectedId("clips_tab", "reels_tab")) return InstagramScreen.REELS
         if (tree.hasSelectedId("search_tab", "explore_tab")) return InstagramScreen.EXPLORE
         return InstagramScreen.UNKNOWN
+    }
+
+    private fun selective(tree: AccessibilityTreeSnapshot?, viewport: MediaBounds): InstagramScreen {
+        // A gallery/camera/editor can replace every chat anchor and use an embedded surface.
+        // Selective mode must not turn absence of private UI identifiers into an app-wide lock.
+        // This is deliberately weaker than feed lock, including when a root is unavailable.
+        tree ?: return InstagramScreen.OTHER_ALLOWED
+        val identified = evaluate(InstagramProtectionMode.FEED_LOCK, tree, viewport)
+        if (identified in setOf(InstagramScreen.MESSAGES, InstagramScreen.STORY, InstagramScreen.PROFILE))
+            return identified
+        if (tree.hasExternalMedia(viewport, 0.40f, "clips_viewer_view_pager", "reels_viewer",
+                allowInlineMediaPreview = false) ||
+            tree.hasExternalMedia(viewport, 0.60f, "clips_video_container") ||
+            (tree.hasHomeContent(viewport) && tree.hasExactOnScreenId(viewport,
+                "clips_video_container", "clips_media_component", "clips_single_media_component")))
+            return InstagramScreen.REELS
+        if (tree.hasVisibleContentId(viewport, 0.30f, "explore_grid", "explore_recycler_view"))
+            return InstagramScreen.EXPLORE
+        if (tree.hasHomeContent(viewport)) return InstagramScreen.HOME_POSTS
+        // Selected tabs are commonly retained behind a gallery or camera. They are not proof
+        // the feed is currently displayed. Missing/truncated trees also cannot prove that.
+        return InstagramScreen.OTHER_ALLOWED
     }
 }

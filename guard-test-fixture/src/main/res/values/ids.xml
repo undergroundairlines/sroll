@@ -1,4 +1,10 @@
 <resources>
+    <item name="fixture_choose_photo" type="id" />
+    <item name="fixture_take_photo" type="id" />
+    <item name="fixture_capture_photo" type="id" />
+    <item name="fixture_send_photo" type="id" />
+    <item name="fixture_photo_caption" type="id" />
+    <item name="fixture_photo_sent" type="id" />
     <item name="feed_tab" type="id" />
     <item name="direct_tab" type="id" />
     <item name="profile_tab" type="id" />
