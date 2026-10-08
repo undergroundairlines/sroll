@@ -186,10 +186,12 @@ class InstagramFeedPolicyTest {
             node("row_thread_composer_edittext", MediaBounds(0, 1400, 720, 1500),
                 parent = 4, editable = true),
         )
-        for (mode in listOf(InstagramProtectionMode.FEED_LOCK, InstagramProtectionMode.SOCIAL)) {
-            assertEquals(InstagramScreen.UNKNOWN, InstagramFeedPolicy.evaluate(
-                mode, AccessibilityTreeSnapshot(nodes, false), viewport))
-        }
+        val tree = AccessibilityTreeSnapshot(nodes, false)
+        assertFalse("Cached parallel pages must never be reported as a confirmed chat", tree.hasConversation(viewport))
+        assertEquals(InstagramScreen.UNKNOWN, InstagramFeedPolicy.evaluate(
+            InstagramProtectionMode.FEED_LOCK, tree, viewport))
+        assertEquals(InstagramScreen.OTHER_ALLOWED, InstagramFeedPolicy.evaluate(
+            InstagramProtectionMode.SOCIAL, tree, viewport))
     }
 
     @Test fun aViewPagerCannotConfirmTheSameConversationEvenWithSmallBranches() {
