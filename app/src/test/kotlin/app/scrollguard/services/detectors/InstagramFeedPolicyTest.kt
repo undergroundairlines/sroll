@@ -91,6 +91,13 @@ class InstagramFeedPolicyTest {
         assertEquals(InstagramScreen.MESSAGES, screen(*conversationNodes().toTypedArray()))
     }
 
+    @Test fun keyboardOrAttachmentControlsCanLeaveLessThan48PixelsOfCurrentChatHistory() {
+        assertEquals(InstagramScreen.MESSAGES, screen(*conversationNodes(
+            historyBounds = MediaBounds(0, 200, 720, 223)).toTypedArray()))
+        assertEquals(InstagramScreen.UNKNOWN, screen(*conversationNodes(
+            historyBounds = MediaBounds(0, 200, 720, 200)).toTypedArray()))
+    }
+
     @Test fun composerAndHistoryCanBeNestedUnderOneVisibleConversationPage() {
         val nodes = listOf(
             node("root", viewport),

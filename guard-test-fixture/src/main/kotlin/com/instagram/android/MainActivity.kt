@@ -47,8 +47,8 @@ class MainActivity : Activity() {
     @Deprecated("Synthetic fixture uses an explicit screen stack")
     override fun onBackPressed() {
         when (currentScreen) {
-            "photo_gallery", "photo_camera", "photo_editor" -> render("conversation")
-            "conversation", "conversation_scrolling", "shared_reel" -> render(if (currentScreen == "shared_reel") "conversation" else "messages")
+            "photo_gallery", "photo_camera", "photo_editor" -> render("conversation_photos")
+            "conversation", "conversation_photos", "conversation_scrolling", "shared_reel" -> render(if (currentScreen == "shared_reel") "conversation" else "messages")
             "messages", "profile", "story", "story_retained_home" -> render("home")
             else -> super.onBackPressed()
         }
@@ -99,7 +99,7 @@ class MainActivity : Activity() {
                     handler.postDelayed({ render("home", suppressChildEvents = true) }, 700L)
                 }
             }
-            "conversation", "conversation_immediate", "conversation_scrolling" -> {
+            "conversation", "conversation_immediate", "conversation_scrolling", "conversation_photos" -> {
                 body.addView(label("Fixture conversation"))
                 val history = LinearLayout(this).apply {
                     if (screen != "conversation_scrolling") id = R.id.message_list
@@ -140,9 +140,16 @@ class MainActivity : Activity() {
                 } else body.addView(history, LinearLayout.LayoutParams(-1, 0, 1f))
                 val sent = label("Sent: 0", R.id.fixture_sent_status)
                 body.addView(sent)
-                body.addView(label("Photos sent: $photosSent", R.id.fixture_photo_sent))
-                action("Choose photo", viewId = R.id.fixture_choose_photo) { render("photo_gallery") }
-                action("Take photo", viewId = R.id.fixture_take_photo) { render("photo_camera") }
+                if (screen == "conversation_photos") {
+                    body.addView(label("Photos sent: $photosSent", R.id.fixture_photo_sent).apply {
+                        textSize = 12f
+                        setPadding(0, 0, 0, 0)
+                    })
+                    val attachments = LinearLayout(this)
+                    body.addView(attachments)
+                    action("Choose photo", attachments, R.id.fixture_choose_photo) { render("photo_gallery") }
+                    action("Take photo", attachments, R.id.fixture_take_photo) { render("photo_camera") }
+                }
                 val composer = EditText(this).apply {
                     id = R.id.row_thread_composer_edittext
                     hint = "Message"
@@ -181,7 +188,7 @@ class MainActivity : Activity() {
                     body.addView(caption)
                     action("Send photo", viewId = R.id.fixture_send_photo) {
                         photosSent++
-                        render("conversation")
+                        render("conversation_photos")
                     }
                 }
             }

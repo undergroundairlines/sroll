@@ -62,7 +62,10 @@ internal class AccessibilityTreeSnapshot internal constructor(
             composers.any { (composerIndex, composer) ->
                 val bounds = MediaBounds(history.left, history.top, history.right, history.bottom).intersect(viewport)
                 history.onScreen(viewport) && history.id.substringAfterLast('/') in HISTORY_IDS &&
-                    bounds != null && bounds.width >= viewport.width * 0.55f && bounds.height >= 48 &&
+                    // Keyboard/attachment controls can leave only a narrow strip of history.
+                    // Identity comes from the current composer and shared content parent,
+                    // not an arbitrary minimum number of pixels in that strip.
+                    bounds != null && bounds.width >= viewport.width * 0.55f && bounds.height > 0 &&
                     history.top < composer.bottom && sharedContentParent(composerIndex, historyIndex, viewport)
             }
         }.map { it.index }.toSet()

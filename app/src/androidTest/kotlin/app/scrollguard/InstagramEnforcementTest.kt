@@ -397,7 +397,7 @@ class InstagramEnforcementTest {
     @Test fun selectingEditingAndSendingPhotosDoesNotAttachAPopup() {
         runBlocking { preferences.requestInstagramProtectionMode(InstagramProtectionMode.SOCIAL, System.currentTimeMillis()) }
         awaitCondition { ProtectionRuntime.state.value.instagramMode == InstagramProtectionMode.SOCIAL }
-        open("conversation")
+        open("conversation_photos")
         assertTrue(device.wait(Until.hasObject(By.text("Fixture conversation")), 8_000L))
         assertUnlocked()
         val baseline = ProtectionRuntime.state.value.overlayAttachmentCount
