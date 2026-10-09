@@ -111,4 +111,11 @@ class InstagramHomeVideoTest {
         assertEquals(InstagramScreen.OTHER_ALLOWED, InstagramFeedPolicy.evaluate(InstagramProtectionMode.SOCIAL,
             AccessibilityTreeSnapshot(gone, false), viewport, rememberedHomeMedia = setOf(42)))
     }
+    @Test fun incompleteHomeCannotClaimARememberedMediaNodeHasDisappeared() {
+        val photo = home(node(parent = 1, kind = "android.widget.ImageView"))
+        assertEquals(InstagramScreen.HOME_MEDIA_UNKNOWN, InstagramFeedPolicy.evaluate(InstagramProtectionMode.SOCIAL,
+            AccessibilityTreeSnapshot(photo, true), viewport, rememberedHomeMedia = setOf(42)))
+        assertEquals(InstagramScreen.HOME_POSTS, InstagramFeedPolicy.evaluate(InstagramProtectionMode.SOCIAL,
+            AccessibilityTreeSnapshot(photo, false), viewport, rememberedHomeMedia = setOf(42)))
+    }
 }

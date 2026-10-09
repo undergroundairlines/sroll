@@ -289,7 +289,10 @@ class ShortFormContentBlockerService : AccessibilityService() {
         val screen = if (tree == null && instagramMode == InstagramProtectionMode.SOCIAL && remembered.isNotEmpty() &&
             lastScreen in HOME_MEDIA_SCREENS) lastScreen else evaluated
         if (screen in HOME_MEDIA_SCREENS) {
-            if (tree != null) rememberedHomeMedia = tree.homeVideos(foreground.contentBounds, remembered).map { it.identity }.toSet()
+            if (tree != null) {
+                val observedKeys = tree.homeVideos(foreground.contentBounds, remembered).map { it.identity }.toSet()
+                if (observedKeys.isNotEmpty() || !tree.truncated) rememberedHomeMedia = observedKeys
+            }
             rememberedHomeMediaWindow = foreground.windowId
         } else {
             rememberedHomeMedia = emptySet()

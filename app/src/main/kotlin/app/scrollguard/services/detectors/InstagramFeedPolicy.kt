@@ -103,6 +103,9 @@ internal object InstagramFeedPolicy {
         val homeMedia = tree.homeVideos(viewport, remembered)
         if (homeMedia.any { it.confirmedVideo }) return InstagramScreen.HOME_REEL
         if (homeMedia.isNotEmpty()) return InstagramScreen.HOME_MEDIA_UNKNOWN
+        // A missing child beyond the scan limit is not proof the guarded render node went away.
+        if (remembered.isNotEmpty() && tree.truncated && tree.hasHomeContent(viewport))
+            return InstagramScreen.HOME_MEDIA_UNKNOWN
         if (tree.hasExternalMedia(viewport, 0.60f, "clips_video_container") ||
             (tree.hasHomeContent(viewport) && tree.hasExactOnScreenId(viewport,
                 "clips_video_container", "clips_media_component", "clips_single_media_component")))
