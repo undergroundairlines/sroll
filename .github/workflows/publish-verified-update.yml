@@ -1,0 +1,74 @@
+name: Publish verified Scroll Guard 0.4.3
+
+on:
+  push:
+    branches: [scroll-guard-message-fix]
+    paths: [.github/workflows/publish-verified-update.yml]
+  workflow_dispatch:
+
+permissions:
+  contents: write
+  actions: read
+
+jobs:
+  publish:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: 16ff4ab82024e0dbbe8532b0cf54739b8e99bd18
+      - name: Publish exact APK from the fully passed run
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          set -euo pipefail
+          source_sha=16ff4ab82024e0dbbe8532b0cf54739b8e99bd18
+          tested_run=37720911660
+          artifact=11526093035
+          expected_apk=3335a92409e4a5b57f9da364498d1d7e65cd3b76342a16e958bc3f6d00052039
+          mkdir -p "$RUNNER_TEMP/verified-update"
+          cd "$RUNNER_TEMP/verified-update"
+          gh api "repos/$GITHUB_REPOSITORY/actions/runs/$tested_run" > run.json
+          gh api "repos/$GITHUB_REPOSITORY/actions/artifacts/$artifact" > artifact.json
+          python3 - <<'PY'
+          import json
+          run = json.load(open('run.json'))
+          artifact = json.load(open('artifact.json'))
+          assert run['conclusion'] == 'success' and run['status'] == 'completed'
+          assert run['head_sha'] == '16ff4ab82024e0dbbe8532b0cf54739b8e99bd18'
+          assert artifact['workflow_run']['id'] == 37720911660
+          assert artifact['name'] == 'scroll-guard-debug-apk' and not artifact['expired']
+          PY
+          gh api "repos/$GITHUB_REPOSITORY/actions/artifacts/$artifact/zip" > tested.zip
+          unzip -q tested.zip -d tested
+          apk=scroll-guard-0.4.3.apk
+          report=scroll-guard-0.4.3-verification.txt
+          cp tested/outputs/apk/debug/app-debug.apk "$apk"
+          cp tested/reports/delivery/final-delivery.txt "$report"
+          actual=$(sha256sum "$apk" | cut -d ' ' -f 1)
+          test "$actual" = "$expected_apk"
+          grep -F "APK SHA-256: $actual" "$report"
+          # Verify these exact downloaded bytes again; no rebuild and no private signing key.
+          cd "$GITHUB_WORKSPACE"
+          bash scripts/verify-delivery-apk.sh "$RUNNER_TEMP/verified-update/$apk" final-publication
+          cd "$RUNNER_TEMP/verified-update"
+          cp "$GITHUB_WORKSPACE/app/build/reports/delivery/final-publication.txt" "$report"
+          printf '\nVerified source: %s\nPassed workflow run: %s\nUnit tests: 122 passed\nAndroid 15 synthetic tests: 34 passed\n' "$source_sha" "$tested_run" >> "$report"
+          zip -j Scroll-Guard-0.4.3.zip "$apk" "$report"
+          unzip -p Scroll-Guard-0.4.3.zip "$apk" | cmp - "$apk"
+          cat > notes.md <<'EOF'
+          Scroll Guard 0.4.3 (app.scrollguard, versionCode 403). Install over the existing app; do not uninstall or clear data.
+
+          Turn on "Block Reels and Explore only" to keep texting, sending photos, Stories, profiles and ordinary posts usable. It blocks positively recognised feeds; unrecognised feeds may get through. Entire-Home lock and whole-app lock remain separate options. Saved modes and the persistent 30-minute Strict Mode wait are preserved.
+
+          This download uses the exact APK from the fully passed run: 122 unit tests, lint, build and 34 Android 15 instrumentation tests. The duplicate push-run emulator went offline near its end; that run's APK is not used here. Instrumentation uses a synthetic Instagram fixture, not real Instagram or the user's Nothing OS phone. The final APK certificate matches the installed 0.4.0 certificate and was verified again immediately before publication.
+
+          Download the APK directly, or extract the ZIP and open scroll-guard-0.4.3.apk. Test gallery and camera photo sending, typing and scrolling messages, Stories, and recognised Reels/Explore on the phone.
+          EOF
+          tag=v0.4.3-test-16ff4ab
+          if gh release view "$tag" --repo "$GITHUB_REPOSITORY" >/dev/null 2>&1; then
+            gh release upload "$tag" "$apk" "$report" Scroll-Guard-0.4.3.zip --repo "$GITHUB_REPOSITORY" --clobber
+          else
+            gh release create "$tag" "$apk" "$report" Scroll-Guard-0.4.3.zip --repo "$GITHUB_REPOSITORY" --target "$source_sha" --prerelease --title "Scroll Guard 0.4.3 phone update" --notes-file notes.md
+          fi

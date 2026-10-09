@@ -49,4 +49,32 @@ class ForegroundSessionTrackerTest {
             tracker.finish(),
         )
     }
+
+    @Test
+    fun sessionsCrossingBothBoundariesAreClippedToTheRequestedPeriod() {
+        val tracker = ForegroundSessionTracker(10L, 30L)
+        tracker.resume("instagram", "Feed", 0L)
+        tracker.pause("instagram", "Feed", 40L)
+        assertEquals(listOf(UsageSession("instagram", 10L, 30L)), tracker.finish())
+    }
+
+    @Test
+    fun rapidActivityTransitionsNeverCountTwoAppsForTheSameTime() {
+        val tracker = ForegroundSessionTracker(0L, 100L)
+        tracker.resume("instagram", "Home", 0L)
+        tracker.resume("instagram", "Inbox", 5L)
+        tracker.resume("youtube", "Watch", 10L)
+        tracker.pause("instagram", "Home", 15L)
+        tracker.pause("instagram", "Inbox", 20L)
+        tracker.resume("instagram", "Thread", 30L)
+        tracker.pause("youtube", "Watch", 35L)
+        tracker.resume("instagram", "Thread", 40L)
+        val sessions = tracker.finish()
+        assertEquals(100L, sessions.sumOf { it.durationMillis })
+        assertEquals(
+            listOf(UsageSession("instagram", 0L, 10L), UsageSession("youtube", 10L, 30L),
+                UsageSession("instagram", 30L, 100L)),
+            sessions,
+        )
+    }
 }

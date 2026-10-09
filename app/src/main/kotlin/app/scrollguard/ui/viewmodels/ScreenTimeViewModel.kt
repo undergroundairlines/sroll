@@ -16,6 +16,7 @@ import app.scrollguard.services.ScreenTimeRepository
 import app.scrollguard.services.ScreenTimeGoalStore
 import app.scrollguard.widgets.ScreenTimeWidgetUpdater
 import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.Job
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
@@ -73,13 +74,19 @@ class ScreenTimeViewModel(application: Application) : AndroidViewModel(applicati
         }
 
         refreshJob?.cancel()
+        val requestedPeriod = _state.value.selectedPeriod
         refreshJob = viewModelScope.launch {
             try {
                 val report = withContext(Dispatchers.IO) {
-                    repository.load(_state.value.selectedPeriod)
+                    repository.load(requestedPeriod)
                 }
-                _state.update { it.copy(isLoading = false, report = report) }
+                _state.update {
+                    if (it.selectedPeriod == requestedPeriod) it.copy(isLoading = false, report = report)
+                    else it
+                }
                 ScreenTimeWidgetUpdater.updateAll(getApplication())
+            } catch (cancelled: CancellationException) {
+                throw cancelled
             } catch (_: RuntimeException) {
                 _state.update {
                     it.copy(

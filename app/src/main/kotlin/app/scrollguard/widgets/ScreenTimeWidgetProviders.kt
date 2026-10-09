@@ -157,9 +157,9 @@ object ScreenTimeWidgetUpdater {
     private fun widgetComparison(change: Int?): String {
         return when {
             change == null -> "Today"
-            change > 0 -> "↑ ${abs(change)}% vs yesterday"
-            change < 0 -> "↓ ${abs(change)}% vs yesterday"
-            else -> "Same as yesterday"
+            change > 0 -> "↑ ${abs(change)}% vs yesterday so far"
+            change < 0 -> "↓ ${abs(change)}% vs yesterday so far"
+            else -> "Same as yesterday so far"
         }
     }
 }

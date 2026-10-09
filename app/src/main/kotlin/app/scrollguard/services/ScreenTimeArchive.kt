@@ -37,13 +37,24 @@ class ScreenTimeArchive(context: Context) :
             CREATE TABLE day_summary (
                 day_start INTEGER PRIMARY KEY,
                 screen_on_ms INTEGER NOT NULL,
-                pickups INTEGER NOT NULL
+                pickups INTEGER NOT NULL,
+                history_complete INTEGER NOT NULL DEFAULT 0
             )
             """.trimIndent(),
         )
     }
 
-    override fun onUpgrade(database: SQLiteDatabase, oldVersion: Int, newVersion: Int) = Unit
+    override fun onUpgrade(database: SQLiteDatabase, oldVersion: Int, newVersion: Int) {
+        if (oldVersion < 2) database.execSQL(
+            "ALTER TABLE day_summary ADD COLUMN history_complete INTEGER NOT NULL DEFAULT 0",
+        )
+    }
+
+    /** Legacy rows retain their totals, but their source completeness cannot be reconstructed. */
+    fun hasCompleteDay(dayStart: Long): Boolean = readableDatabase.query(
+        "day_summary", arrayOf("history_complete"), "day_start = ?", arrayOf(dayStart.toString()),
+        null, null, null, "1",
+    ).use { cursor -> cursor.moveToFirst() && cursor.getInt(0) == 1 }
 
     fun hasDay(dayStart: Long): Boolean {
         readableDatabase.query(
@@ -65,6 +76,23 @@ class ScreenTimeArchive(context: Context) :
         }
     }
 
+    /** Empty backfill rows from older releases are not evidence of available history. */
+    fun earliestRecordedDay(): Long? {
+        readableDatabase.rawQuery(
+            """
+            SELECT MIN(day_start) FROM (
+                SELECT day_start FROM app_daily WHERE foreground_ms > 0
+                UNION
+                SELECT day_start FROM day_summary WHERE screen_on_ms > 0 OR pickups > 0
+            )
+            """.trimIndent(),
+            null,
+        ).use { cursor ->
+            if (!cursor.moveToFirst() || cursor.isNull(0)) return null
+            return cursor.getLong(0)
+        }
+    }
+
     fun deleteDay(dayStart: Long) {
         writableDatabase.beginTransaction()
         try {
@@ -77,6 +105,8 @@ class ScreenTimeArchive(context: Context) :
     }
 
     fun replaceDay(dayStart: Long, snapshot: ExactUsageSnapshot) {
+        // Pruned partial events must never replace any previously archived day.
+        if (hasDay(dayStart) && !snapshot.historyComplete) return
         writableDatabase.beginTransaction()
         try {
             writableDatabase.delete(
@@ -102,6 +132,7 @@ class ScreenTimeArchive(context: Context) :
                     put("day_start", dayStart)
                     put("screen_on_ms", snapshot.screenOnMillis)
                     put("pickups", snapshot.pickups)
+                    put("history_complete", if (snapshot.historyComplete) 1 else 0)
                 },
                 SQLiteDatabase.CONFLICT_REPLACE,
             )
@@ -175,6 +206,6 @@ class ScreenTimeArchive(context: Context) :
 
     private companion object {
         const val DATABASE_NAME = "screen_time_archive.db"
-        const val DATABASE_VERSION = 1
+        const val DATABASE_VERSION = 2
     }
 }

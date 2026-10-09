@@ -25,12 +25,219 @@ internal data class NodeSignal(
     val top: Int,
     val right: Int,
     val bottom: Int,
+    val parentIndex: Int = -1,
+    val editable: Boolean = false,
+    val className: String = "",
+    val drawingOrder: Int = 0,
+    val mediaRole: MediaRole = MediaRole.NONE,
+    val childCount: Int = 0,
+    val identity: Int = 0,
 )
+
+internal data class HomeVideoEvidence(val bounds: MediaBounds, val reason: String, val identity: Int, val confirmedVideo: Boolean)
 
 internal class AccessibilityTreeSnapshot internal constructor(
     private val nodes: List<NodeSignal>,
     val truncated: Boolean,
+    private val incompleteParents: Set<Int> = emptySet(),
 ) {
+    val nodeCount: Int get() = nodes.size
+
+    private fun NodeSignal.onScreen(viewport: MediaBounds): Boolean = visible &&
+        MediaBounds(left, top, right, bottom).intersect(viewport) != null
+
+    fun hasExactOnScreenId(viewport: MediaBounds, vararg ids: String): Boolean = nodes.any {
+        it.onScreen(viewport) && it.id.substringAfterLast('/') in ids
+    }
+
+    fun hasExactContentId(viewport: MediaBounds, minHeightFraction: Float, vararg ids: String): Boolean = nodes.any {
+        val bounds = MediaBounds(it.left, it.top, it.right, it.bottom).intersect(viewport)
+        it.onScreen(viewport) && it.id.substringAfterLast('/') in ids && bounds != null &&
+            bounds.width >= viewport.width * 0.55f && bounds.height >= viewport.height * minHeightFraction
+    }
+
+    /** Composer + history must belong to one visible content subtree, not cached parallel pages. */
+    fun hasConversation(viewport: MediaBounds): Boolean = conversationHistories(viewport).isNotEmpty()
+
+    private fun conversationHistories(viewport: MediaBounds): Set<Int> {
+        val composers = nodes.withIndex().filter { (_, node) ->
+            node.onScreen(viewport) && node.editable && node.id.substringAfterLast('/') in COMPOSER_IDS
+        }
+        return nodes.withIndex().filter { (historyIndex, history) ->
+            composers.any { (composerIndex, composer) ->
+                val bounds = MediaBounds(history.left, history.top, history.right, history.bottom).intersect(viewport)
+                history.onScreen(viewport) && history.id.substringAfterLast('/') in HISTORY_IDS &&
+                    bounds != null && bounds.width >= viewport.width * 0.55f && bounds.height >= 48 &&
+                    history.top < composer.bottom && sharedContentParent(composerIndex, historyIndex, viewport)
+            }
+        }.map { it.index }.toSet()
+    }
+
+    private fun sharedContentParent(first: Int, second: Int, viewport: MediaBounds): Boolean {
+        fun path(index: Int): List<Int> {
+            val result = mutableListOf<Int>()
+            var current = index
+            while (current in nodes.indices && current !in result) {
+                result.add(current)
+                current = nodes[current].parentIndex
+            }
+            return result
+        }
+        val firstPath = path(first)
+        val secondPath = path(second)
+        val common = firstPath.drop(1).firstOrNull { it in secondPath.drop(1) } ?: return false
+        if (nodes[common].parentIndex < 0 || !nodes[common].onScreen(viewport) ||
+            nodes[common].className.contains("ViewPager", ignoreCase = true)) return false
+        if (firstPath.takeWhile { it != common }.any { !nodes[it].onScreen(viewport) } ||
+            secondPath.takeWhile { it != common }.any { !nodes[it].onScreen(viewport) }) return false
+        val firstBranch = nodes[firstPath[firstPath.indexOf(common) - 1]]
+        val secondBranch = nodes[secondPath[secondPath.indexOf(common) - 1]]
+        // Two large sibling pages are not one chat, even below DecorView/content wrappers.
+        val anchoredThread = nodes[common].id.substringAfterLast('/') == "direct_thread"
+        return anchoredThread || !(firstBranch.height >= viewport.height * 0.50f && secondBranch.height >= viewport.height * 0.50f)
+    }
+
+    private fun ancestors(index: Int): List<Int> {
+        val path = mutableListOf<Int>()
+        var current = index
+        while (current in nodes.indices && current !in path) {
+            path.add(current)
+            current = nodes[current].parentIndex
+        }
+        return path
+    }
+
+    private fun contentIndices(viewport: MediaBounds, fraction: Float, ids: Set<String>, exact: Boolean = true): Set<Int> =
+        nodes.withIndex().filter { (_, n) ->
+            val bounds = MediaBounds(n.left, n.top, n.right, n.bottom).intersect(viewport)
+            n.onScreen(viewport) && bounds != null && bounds.width >= viewport.width * 0.55f &&
+                bounds.height >= viewport.height * fraction && ids.any {
+                    if (exact) n.id.substringAfterLast('/') == it else n.id.substringAfterLast('/').startsWith(it)
+                }
+        }.map { it.index }.toSet()
+
+    /** Android drawing order is relative to siblings only. Compare branches at their common parent. */
+    private fun behind(first: Int, second: Int): Boolean {
+        val a = ancestors(first)
+        val b = ancestors(second)
+        val common = a.firstOrNull { it in b } ?: return false
+        val ai = a.indexOf(common)
+        val bi = b.indexOf(common)
+        if (ai < 1 || bi < 1) return false
+        val left = nodes[a[ai - 1]].drawingOrder
+        val right = nodes[b[bi - 1]].drawingOrder
+        return left > 0 && right > left
+    }
+
+    private fun storyViewers(viewport: MediaBounds): Set<Int> =
+        contentIndices(viewport, 0.40f, STORY_IDS, exact = false)
+
+    private fun homeNodes(viewport: MediaBounds): Set<Int> = nodes.withIndex().filter { (_, n) ->
+        n.onScreen(viewport) && (n.id.substringAfterLast('/').startsWith("feed_recycler_view") ||
+            n.id.substringAfterLast('/').startsWith("row_feed_profile_header"))
+    }.map { it.index }.toSet()
+
+    fun hasHomeContent(viewport: MediaBounds): Boolean {
+        val histories = messageHistoryIndices(viewport)
+        return homeNodes(viewport).any { index -> ancestors(index).none { it in histories } }
+    }
+
+    // A retained share preview does not become Home when a picker hides the chat composer.
+    // This owns preview media only; it cannot grant MESSAGES or permit a dedicated Reel pager.
+    private fun messageHistoryIndices(viewport: MediaBounds): Set<Int> = nodes.withIndex()
+        .filter { (_, n) -> n.onScreen(viewport) && n.id.substringAfterLast('/') in HISTORY_IDS }
+        .map { it.index }.toSet()
+
+    /** Media must belong to a live Home list/card, not merely coexist with a selected Home tab. */
+    private fun homeFeedIndices(viewport: MediaBounds): Set<Int> {
+        val feeds = contentIndices(viewport, 0.10f, setOf("feed_recycler_view"), exact = false)
+        val headerLists = homeNodes(viewport).filter { nodes[it].id.substringAfterLast('/').startsWith("row_feed_profile_header") }
+            .flatMap { header -> ancestors(header).drop(1).filter { index ->
+                val n = nodes[index]
+                n.onScreen(viewport) && n.width >= viewport.width * 0.55f &&
+                    (n.scrollable || n.className.endsWith("RecyclerView") || n.className == "android.widget.ScrollView")
+            } }
+        return feeds + headerLists
+    }
+
+    fun homeVideos(viewport: MediaBounds, remembered: Set<Int> = emptySet()): List<HomeVideoEvidence> {
+        if (!hasHomeContent(viewport) || hasForegroundStory(viewport)) return emptyList()
+        val feeds = homeFeedIndices(viewport)
+        val safeOwners = messageHistoryIndices(viewport) + storyViewers(viewport)
+        return nodes.withIndex().mapNotNull { (index, n) ->
+            val path = ancestors(index)
+            if (!n.onScreen(viewport) || path.none { it in feeds } || path.any { it in safeOwners }) return@mapNotNull null
+            val bounds = MediaBounds(n.left, n.top, n.right, n.bottom).intersect(viewport) ?: return@mapNotNull null
+            if (bounds.width < viewport.width * 0.55f) return@mapNotNull null
+            val id = n.id.substringAfterLast('/')
+            val (reason, confirmed) = when {
+                id in setOf("clips_video_container", "clips_media_component", "clips_single_media_component") -> "Home media ID $id" to true
+                InstagramMediaSemantics.isVideoView(n.className) -> "Home native VideoView" to true
+                n.mediaRole in setOf(MediaRole.VIDEO, MediaRole.REEL) -> "Home explicit accessibility role ${n.mediaRole}" to true
+                n.mediaRole == MediaRole.NONE && InstagramMediaSemantics.isUnlabelledSurfaceClass(n.className) &&
+                    n.childCount == 0 && !n.editable && !n.scrollable &&
+                    (bounds.height >= viewport.height * 0.15f || n.identity in remembered) ->
+                        "Home unlabelled render surface; video type unknown" to false
+                else -> return@mapNotNull null
+            }
+            HomeVideoEvidence(bounds, reason, n.identity, confirmed)
+        }.distinct()
+    }
+
+    private fun foregroundStories(viewport: MediaBounds): Set<Int> {
+        val homes = homeNodes(viewport)
+        return storyViewers(viewport).filter { viewer ->
+            val backgroundHomes = homes.filter { viewer !in ancestors(it) }
+            val controls = nodes.withIndex().filter { (index, n) -> n.onScreen(viewport) && viewer in ancestors(index) }
+            val hasProgress = controls.any { it.value.id.substringAfterLast('/') == "reel_viewer_progress_bar" }
+            val hasHeader = controls.any { it.value.id.substringAfterLast('/') == "reel_viewer_title" }
+            backgroundHomes.none { behind(viewer, it) } &&
+                (backgroundHomes.isEmpty() || backgroundHomes.all { behind(it, viewer) } || (hasProgress && hasHeader))
+        }.toSet()
+    }
+
+    fun hasForegroundStory(viewport: MediaBounds): Boolean = foregroundStories(viewport).isNotEmpty()
+
+    /** A partial message row is not a partial screen identity. Never ignore gaps at the page/root. */
+    fun contentGapsAreSafe(screen: InstagramScreen, viewport: MediaBounds): Boolean {
+        if (!truncated) return true
+        val owners = when (screen) {
+            InstagramScreen.MESSAGES -> conversationHistories(viewport) +
+                contentIndices(viewport, 0.30f, setOf("inbox_refreshable_thread_list_recyclerview"))
+            InstagramScreen.STORY -> foregroundStories(viewport)
+            else -> emptySet()
+        }
+        return incompleteParents.isNotEmpty() && incompleteParents.all { gap ->
+            ancestors(gap).any { it in owners }
+        }
+    }
+
+    /** Media in message history/Stories is preview content, not evidence of a separate scrolling feed. */
+    fun hasExternalMedia(viewport: MediaBounds, fraction: Float, vararg ids: String,
+        allowInlineMediaPreview: Boolean = true): Boolean {
+        val histories = if (allowInlineMediaPreview) messageHistoryIndices(viewport) else emptySet()
+        val stories = foregroundStories(viewport)
+        return contentIndices(viewport, fraction, ids.toSet(), exact = false).any { index ->
+            ancestors(index).none { it in histories || (allowInlineMediaPreview && it in stories) } &&
+                stories.none { behind(index, it) }
+        }
+    }
+
+    /** No text, labels or account content; enough structure to diagnose from the phone. */
+    fun structuralReport(): List<String> {
+        val media = nodes.indices.filter { i ->
+            InstagramMediaSemantics.isVideoView(nodes[i].className) || nodes[i].mediaRole != MediaRole.NONE ||
+                (InstagramMediaSemantics.isUnlabelledSurfaceClass(nodes[i].className) && nodes[i].childCount == 0)
+        }.sortedByDescending { nodes[it].width.toLong() * nodes[it].height }
+        val reportIndices = (media.flatMap(::ancestors) + nodes.indices.filter { nodes[it].id.isNotBlank() }).distinct().take(180)
+        return reportIndices.map { index ->
+            val n = nodes[index]
+            "$index parent=${n.parentIndex} ${n.id.substringAfterLast('/')} " +
+                "bounds=${n.left},${n.top},${n.right},${n.bottom} visible=${n.visible} " +
+                "selected=${n.selected} editable=${n.editable} scrollable=${n.scrollable} draw=${n.drawingOrder} " +
+                "class=${n.className} mediaRole=${n.mediaRole} children=${n.childCount} identity=${n.identity}"
+        }
+    }
     fun hasId(vararg fragments: String): Boolean = nodes.any { node ->
         fragments.any { fragment -> node.id.contains(fragment.normalized()) }
     }
@@ -121,22 +328,29 @@ internal class AccessibilityTreeSnapshot internal constructor(
 
     companion object {
         private const val MAX_NODES = 1200
+        val COMPOSER_IDS = setOf("row_thread_composer_edittext", "direct_thread_composer_edittext",
+            "message_composer_edit_text", "message_composer")
+        val HISTORY_IDS = setOf("message_list", "direct_thread_message_list", "direct_thread_message_list_recycler_view",
+            "direct_thread_recycler_view", "direct_thread_recyclerview", "direct_thread_list")
+        private val STORY_IDS = setOf("story_viewer", "stories_viewer", "reel_viewer")
 
-        fun from(vararg roots: AccessibilityNodeInfo): AccessibilityTreeSnapshot {
-            val queue = ArrayDeque<AccessibilityNodeInfo>()
+        fun from(vararg roots: AccessibilityNodeInfo, includeLabels: Boolean = true): AccessibilityTreeSnapshot {
+            val queue = ArrayDeque<Pair<AccessibilityNodeInfo, Int>>()
             val signals = mutableListOf<NodeSignal>()
             val visited = HashSet<AccessibilityNodeInfo>()
-            roots.forEach(queue::addLast)
+            roots.forEach { queue.addLast(it to -1) }
+            var incomplete = false
+            val incompleteParents = mutableSetOf<Int>()
 
             while (queue.isNotEmpty() && signals.size < MAX_NODES) {
-                val node = queue.removeFirst()
+                val (node, parentIndex) = queue.removeFirst()
                 if (!visited.add(node)) continue
                 val bounds = Rect()
                 node.getBoundsInScreen(bounds)
-                val label = sequenceOf(node.contentDescription, node.text)
+                val label = if (includeLabels) sequenceOf(node.contentDescription, node.text)
                     .filterNotNull()
                     .joinToString(" ")
-                    .normalized()
+                    .normalized() else ""
 
                 signals += NodeSignal(
                     id = node.viewIdResourceName.orEmpty().normalized(),
@@ -150,16 +364,28 @@ internal class AccessibilityTreeSnapshot internal constructor(
                     top = bounds.top,
                     right = bounds.right,
                     bottom = bounds.bottom,
+                    parentIndex = parentIndex,
+                    editable = node.isEditable,
+                    className = node.className?.toString().orEmpty(),
+                    drawingOrder = node.drawingOrder,
+                    mediaRole = InstagramMediaSemantics.role(node.contentDescription),
+                    childCount = node.childCount,
+                    identity = node.hashCode(),
                 )
 
                 for (index in 0 until node.childCount) {
-                    node.getChild(index)?.let(queue::addLast)
+                    val child = node.getChild(index)
+                    if (child == null) {
+                        incomplete = true
+                        incompleteParents.add(signals.lastIndex)
+                    } else queue.addLast(child to signals.lastIndex)
                 }
             }
 
             return AccessibilityTreeSnapshot(
                 nodes = signals,
-                truncated = queue.isNotEmpty(),
+                truncated = incomplete || queue.isNotEmpty(),
+                incompleteParents = incompleteParents + queue.map { it.second },
             )
         }
     }

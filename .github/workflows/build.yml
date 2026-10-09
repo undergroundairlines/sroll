@@ -3,7 +3,7 @@ name: Build Scroll Guard APK
 on:
   workflow_dispatch:
   push:
-    branches: [main, scroll-guard]
+    branches: [main, scroll-guard, scroll-guard-message-fix]
   pull_request:
 
 permissions:
@@ -13,6 +13,8 @@ jobs:
   build:
     runs-on: ubuntu-latest
     timeout-minutes: 45
+    permissions:
+      contents: write
 
     steps:
       - name: Check out source
@@ -33,13 +35,20 @@ jobs:
 
       - name: Pin the signing key before emulator setup
         run: |
+          set -euo pipefail
           mkdir -p "$HOME/.android" "$RUNNER_TEMP/scroll-guard-signing"
           if [ ! -f "$HOME/.android/debug.keystore" ]; then
-            keytool -genkeypair -keystore "$HOME/.android/debug.keystore" -storepass android -keypass android -alias androiddebugkey -keyalg RSA -keysize 2048 -validity 10000 -dname "CN=Android Debug,O=Android,C=US"
+            echo "::error::The Scroll Guard signing cache is missing. Restore the original 0.4.0 keystore; creating a new key would prevent updating the installed app and preserving its data."
+            exit 1
           fi
           cp "$HOME/.android/debug.keystore" "$RUNNER_TEMP/scroll-guard-signing/debug.keystore"
           echo "SCROLL_GUARD_SIGNING_STORE=$RUNNER_TEMP/scroll-guard-signing/debug.keystore" >> "$GITHUB_ENV"
-          keytool -exportcert -keystore "$RUNNER_TEMP/scroll-guard-signing/debug.keystore" -storepass android -alias androiddebugkey | sha256sum
+          certificate=$(keytool -exportcert -keystore "$RUNNER_TEMP/scroll-guard-signing/debug.keystore" -storepass android -alias androiddebugkey | sha256sum | cut -d ' ' -f 1)
+          if [ "$certificate" != "5f9a5eccde1fc15e4c60cc8ce3de4eab317fac4770c7795cebc49200840ad0cf" ]; then
+            echo "::error::Restored signing key does not match the delivered 0.4.0 APK. Refusing an incompatible update."
+            exit 1
+          fi
+          echo "Confirmed installed-app signing certificate SHA-256: $certificate"
 
       - name: Set up Gradle
         uses: gradle/actions/setup-gradle@v4
@@ -47,12 +56,30 @@ jobs:
           gradle-version: "9.7.1"
 
       - name: Test, lint, and build debug APK
+        id: build-apk
         run: gradle test lint assembleDebug --stacktrace
+
+      - name: Record unit test totals
+        if: always()
+        run: |
+          mkdir -p app/build/reports/delivery
+          python3 - <<'PY' | tee app/build/reports/delivery/unit-tests.txt
+          import glob, xml.etree.ElementTree as ET
+          totals = dict(tests=0, failures=0, errors=0, skipped=0)
+          for path in glob.glob('app/build/test-results/testDebugUnitTest/TEST-*.xml'):
+              root = ET.parse(path).getroot()
+              for key in totals:
+                  totals[key] += int(root.get(key, 0))
+          print('Unit tests:', ', '.join(f'{key}={value}' for key,value in totals.items()))
+          PY
+
+      - name: Verify APK identity after build
+        run: bash scripts/verify-delivery-apk.sh app/build/outputs/apk/debug/app-debug.apk after-build
 
       - name: Enable emulator acceleration
         run: sudo chmod 666 /dev/kvm
 
-      - name: Verify real accessibility enforcement on Android 15
+      - name: Verify Android accessibility mechanics with a synthetic fixture
         uses: reactivecircus/android-emulator-runner@v2
         with:
           api-level: 35
@@ -62,6 +89,10 @@ jobs:
           emulator-options: -no-window -gpu swiftshader_indirect -noaudio -no-boot-anim -no-snapshot
           script: gradle :guard-test-fixture:installDebug :app:connectedDebugAndroidTest --stacktrace; guard_test_result=$?; adb pull /sdcard/Download/scrollguard-verification app/build/reports/device; exit "$guard_test_result"
 
+      - name: Verify APK identity after instrumentation
+        if: always() && steps.build-apk.outcome == 'success'
+        run: bash scripts/verify-delivery-apk.sh app/build/outputs/apk/debug/app-debug.apk after-instrumentation
+
       - name: Upload verification reports
         if: always()
         uses: actions/upload-artifact@v4
@@ -69,6 +100,7 @@ jobs:
           name: scroll-guard-verification
           path: |
             app/build/reports/
+            app/build/test-results/
             app/build/outputs/androidTest-results/
           if-no-files-found: warn
           retention-days: 14
@@ -81,10 +113,56 @@ jobs:
             cp "$SCROLL_GUARD_SIGNING_STORE" "$HOME/.android/debug.keystore"
           fi
 
+      - name: Confirm the final deliverable identity
+        run: |
+          bash scripts/verify-delivery-apk.sh app/build/outputs/apk/debug/app-debug.apk final-delivery
+          cat app/build/reports/delivery/final-delivery.txt >> "$GITHUB_STEP_SUMMARY"
+          echo "Android instrumentation uses a synthetic Instagram fixture. It verifies Android mechanics, not compatibility with the user's real Instagram build." >> "$GITHUB_STEP_SUMMARY"
+
       - name: Upload installable APK
         uses: actions/upload-artifact@v4
         with:
           name: scroll-guard-debug-apk
-          path: app/build/outputs/apk/debug/app-debug.apk
+          path: |
+            app/build/outputs/apk/debug/app-debug.apk
+            app/build/reports/delivery/final-delivery.txt
           if-no-files-found: error
           retention-days: 14
+
+      - name: Publish verified phone-download test APK
+        if: github.event_name == 'push' && github.ref == 'refs/heads/scroll-guard-message-fix'
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          set -euo pipefail
+          # Check the exact APK once more immediately before copying/uploading it.
+          bash scripts/verify-delivery-apk.sh app/build/outputs/apk/debug/app-debug.apk final-release
+          tag="v0.4.4-test-${GITHUB_SHA:0:7}"
+          mkdir -p "$RUNNER_TEMP/scroll-guard-delivery"
+          apk="$RUNNER_TEMP/scroll-guard-delivery/scroll-guard-0.4.4.apk"
+          report="$RUNNER_TEMP/scroll-guard-delivery/scroll-guard-0.4.4-verification.txt"
+          archive="$RUNNER_TEMP/scroll-guard-delivery/Scroll-Guard-0.4.4.zip"
+          cp app/build/outputs/apk/debug/app-debug.apk "$apk"
+          cp app/build/reports/delivery/final-release.txt "$report"
+          cmp app/build/outputs/apk/debug/app-debug.apk "$apk"
+          zip -j "$archive" "$apk" "$report"
+          # The ZIP is a permanent phone-download alternative and contains the exact verified APK.
+          unzip -p "$archive" scroll-guard-0.4.4.apk | cmp - "$apk"
+          notes="$RUNNER_TEMP/scroll-guard-delivery/release-notes.md"
+          cat > "$notes" <<'EOF'
+          Installable Scroll Guard 0.4.4 test update (app.scrollguard, versionCode 404).
+
+          Download scroll-guard-0.4.4.apk directly on your Android phone, or extract Scroll-Guard-0.4.4.zip and open its APK. Install over your existing Scroll Guard; do not uninstall or clear data.
+
+          Turn on "Protect Home from Reels". Confirmed Home videos and large unlabelled Home render surfaces are shielded even without Reel IDs. Android can hide a TextureView's real type behind plain View, so this conservative fallback can also cover unlabelled photos, friends' videos and animated Home content. Identified photos remain usable. "Skip this Home media" requests one native scroll and keeps the guard until current media has actually gone or is identified as a photo. Messages, photo sending and Stories keep separate rules. Inaccessible players may still get through. Entire-Home and whole-app locks and the persistent Strict Mode deadline are preserved.
+
+          The final APK has been checked against the original 0.4.0 signing certificate. The attached verification report includes its SHA-256 checksum.
+
+          Unit tests, lint and Android 15 instrumentation must pass before this download is published. Instrumentation uses a synthetic Instagram fixture and verifies Android accessibility mechanics; real Instagram and Nothing OS compatibility still require the documented phone acceptance test.
+          EOF
+          if gh release view "$tag" --repo "$GITHUB_REPOSITORY" >/dev/null 2>&1; then
+            gh release upload "$tag" "$apk" "$report" "$archive" --repo "$GITHUB_REPOSITORY" --clobber
+          else
+            gh release create "$tag" "$apk" "$report" "$archive" --repo "$GITHUB_REPOSITORY" --target "$GITHUB_SHA" --prerelease --title "Scroll Guard 0.4.4 phone test (${GITHUB_SHA:0:7})" --notes-file "$notes"
+          fi
+          echo "Phone download: https://github.com/$GITHUB_REPOSITORY/releases/download/$tag/scroll-guard-0.4.4.apk" >> "$GITHUB_STEP_SUMMARY"

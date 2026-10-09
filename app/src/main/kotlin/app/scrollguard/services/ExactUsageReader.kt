@@ -26,6 +26,9 @@ data class ExactUsageSnapshot(
     val sessions: List<UsageSession>,
     val screenOnMillis: Long,
     val pickups: Int,
+    /** Earliest event Android actually returned; absent when its history is unavailable. */
+    val firstEventMillis: Long? = null,
+    val historyComplete: Boolean = true,
 )
 
 /** Reconstructs exact foreground sessions instead of using Android's overlapping aggregate buckets. */
@@ -48,10 +51,12 @@ class ExactUsageReader(context: Context) {
         var screenInteractiveSince = 0L
         var screenOnMillis = 0L
         var pickups = 0
+        var firstEventMillis: Long? = null
 
         while (events.hasNextEvent()) {
             events.getNextEvent(event)
             val timestamp = event.timeStamp.coerceIn(lookbackStart, endMillis)
+            if (firstEventMillis == null) firstEventMillis = timestamp
             when (event.eventType) {
                 UsageEvents.Event.MOVE_TO_FOREGROUND -> {
                     val packageName = event.packageName ?: continue
@@ -70,8 +75,8 @@ class ExactUsageReader(context: Context) {
                     if (!screenInteractive) {
                         screenInteractive = true
                         screenInteractiveSince = timestamp
+                        if (timestamp in startMillis until endMillis) pickups += 1
                     }
-                    if (timestamp in startMillis until endMillis) pickups += 1
                 }
 
                 UsageEvents.Event.SCREEN_NON_INTERACTIVE -> {
@@ -102,7 +107,10 @@ class ExactUsageReader(context: Context) {
         val durations = sessions
             .groupBy { it.packageName }
             .mapValues { (_, packageSessions) -> packageSessions.sumOf { it.durationMillis } }
-        return ExactUsageSnapshot(durations, sessions, screenOnMillis, pickups)
+        return ExactUsageSnapshot(
+            durations, sessions, screenOnMillis, pickups, firstEventMillis,
+            historyComplete = firstEventMillis?.let { it <= startMillis } == true,
+        )
     }
 
     private fun clippedDuration(

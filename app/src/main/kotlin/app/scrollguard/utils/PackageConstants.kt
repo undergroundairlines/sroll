@@ -42,7 +42,7 @@ object PackageConstants {
         TrackedPackage(
             packageName = INSTAGRAM_PACKAGE,
             displayName = "Instagram",
-            description = "Lock Home feed, Reels and Explore",
+            description = "Choose Instagram protection below",
             isEnabled = true,
         ),
         TrackedPackage(

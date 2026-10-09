@@ -10,6 +10,7 @@ package app.scrollguard.utils
 /** Pure timing rules for the persistent Strict Mode unlock countdown. */
 object StrictModePolicy {
     const val INSTAGRAM_FEED_TARGET = "instagram_feed_access"
+    const val INSTAGRAM_SOCIAL_TARGET = "instagram_social_access"
     const val UNLOCK_DELAY_MILLIS = 30L * 60L * 1000L
     const val STRICT_MODE_TARGET = "__strict_mode__"
 

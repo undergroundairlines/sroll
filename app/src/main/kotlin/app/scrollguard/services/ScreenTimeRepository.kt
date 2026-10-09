@@ -47,11 +47,8 @@ class ScreenTimeRepository(private val context: Context) {
         includeImpact: Boolean = true,
     ): ScreenTimeReport {
         val todayStart = startOfDay(nowMillis)
-        val trackingStart = minOf(
-            startOfDay(firstInstallTime()),
-            addDays(todayStart, -60),
-        )
         if (period != UsagePeriod.DAY) archiveCompletedDays()
+        val trackingStart = archive.earliestRecordedDay() ?: todayStart
 
         val currentStart = when (period) {
             UsagePeriod.DAY -> todayStart
@@ -67,7 +64,7 @@ class ScreenTimeRepository(private val context: Context) {
         val previous = previousSnapshot(period, currentStart, todayStart, nowMillis)
         val total = current.durations.values.sum()
         val boundaries = chartBoundaries(period, currentStart, todayStart, nowMillis)
-        val overallBuckets = bucketsForSnapshot(current, boundaries, todayStart)
+        val overallBuckets = bucketsForSnapshot(period, current, boundaries, todayStart)
         val apps = current.durations.entries
             .sortedByDescending { it.value }
             .map { (packageName, durationMillis) ->
@@ -91,7 +88,7 @@ class ScreenTimeRepository(private val context: Context) {
             period = period,
             totalMillis = total,
             previousTotalMillis = previous?.durations?.values?.sum() ?: 0L,
-            changePercentage = previous?.let {
+            changePercentage = previous?.takeIf { it.historyComplete && current.historyComplete }?.let {
                 ScreenTimeFormatting.changePercentage(total, it.durations.values.sum())
             },
             apps = apps,
@@ -106,23 +103,27 @@ class ScreenTimeRepository(private val context: Context) {
             pickups = current.pickups,
             trackingSinceMillis = trackingStart,
             impact = if (includeImpact) buildImpact(nowMillis) else null,
+            historyComplete = current.historyComplete,
         )
     }
 
     private fun buildImpact(nowMillis: Long): ScreenTimeImpact? {
-        val installTime = firstInstallTime().coerceAtMost(nowMillis)
+        val installTime = impactBaselineStore.startedAt(firstInstallTime()).coerceAtMost(nowMillis)
         val elapsedMillis = nowMillis - installTime
         if (elapsedMillis < MINIMUM_IMPACT_WINDOW_MILLIS) return null
 
         val cachedBaseline = impactBaselineStore.load(installTime)
         val refreshBaseline = elapsedMillis < 45L * DAY_MILLIS &&
-            !repairPreferences.getBoolean("impact_baseline_focused_v1", false)
+            (!repairPreferences.getBoolean("impact_baseline_focused_v1", false) ||
+                !impactBaselineStore.historyComplete())
         val baselineDurations = if (cachedBaseline == null || refreshBaseline) {
-            val rebuilt = filtered(
+            val rebuiltSnapshot = filtered(
                 reader.read(installTime - IMPACT_BASELINE_MILLIS, installTime),
-            ).durations
-            val chosen = if (rebuilt.isNotEmpty() || cachedBaseline == null) {
-                impactBaselineStore.save(installTime, rebuilt)
+            )
+            val rebuilt = rebuiltSnapshot.durations
+            // A pruned, partial query must never replace a saved baseline from an older build.
+            val chosen = if (rebuiltSnapshot.historyComplete || cachedBaseline == null) {
+                impactBaselineStore.save(installTime, rebuilt, rebuiltSnapshot.historyComplete)
                 rebuilt
             } else {
                 cachedBaseline
@@ -133,30 +134,50 @@ class ScreenTimeRepository(private val context: Context) {
             cachedBaseline
         }
 
-        // Rewrite the installation day from the actual installation time, not midnight. This
-        // prevents Friday morning usage from being counted as usage "since Scroll Guard".
         archiveCompletedDays()
         val since = combinedSnapshot(installTime, startOfDay(nowMillis), nowMillis)
-        val beforeDaily = normalizedDaily(baselineDurations.values.sum(), IMPACT_BASELINE_MILLIS)
-        val sinceDaily = normalizedDaily(since.durations.values.sum(), elapsedMillis)
+        // Compare equally long windows. During the first week use only the matching interval
+        // before the saved start; afterwards compare the last seven days with the baseline week.
+        val comparisonMillis = minOf(elapsedMillis, IMPACT_BASELINE_MILLIS)
+        val partialBefore = if (comparisonMillis < IMPACT_BASELINE_MILLIS) {
+            filtered(reader.read(installTime - comparisonMillis, installTime))
+        } else null
+        val comparisonBefore = if (comparisonMillis == IMPACT_BASELINE_MILLIS) {
+            baselineDurations
+        } else {
+            partialBefore!!.durations
+        }
+        val comparisonSince = combinedSnapshot(
+            maxOf(installTime, nowMillis - comparisonMillis),
+            startOfDay(nowMillis),
+            nowMillis,
+        )
+        val beforeDaily = normalizedDaily(comparisonBefore.values.sum(), comparisonMillis)
+        val sinceDaily = normalizedDaily(comparisonSince.durations.values.sum(), comparisonMillis)
+        val comparisonComplete = comparisonSince.historyComplete &&
+            (partialBefore?.historyComplete ?: impactBaselineStore.historyComplete())
         val expectedSince = beforeDaily.toDouble() * elapsedMillis.toDouble() / DAY_MILLIS
-        val timeSaved = (expectedSince - since.durations.values.sum().toDouble())
+        val timeSaved = if (comparisonComplete && since.historyComplete) {
+            (expectedSince - since.durations.values.sum().toDouble())
             .toLong()
             .coerceAtLeast(0L)
+        } else 0L
 
-        val packageNames = baselineDurations.keys + since.durations.keys
+        val packageNames = comparisonBefore.keys + comparisonSince.durations.keys
         val apps = packageNames.map { packageName ->
             val before = normalizedDaily(
-                baselineDurations[packageName] ?: 0L,
-                IMPACT_BASELINE_MILLIS,
+                comparisonBefore[packageName] ?: 0L,
+                comparisonMillis,
             )
-            val after = normalizedDaily(since.durations[packageName] ?: 0L, elapsedMillis)
+            val after = normalizedDaily(comparisonSince.durations[packageName] ?: 0L, comparisonMillis)
             AppImpact(
                 packageName = packageName,
                 displayName = appLabel(packageName),
                 beforeDailyMillis = before,
                 sinceDailyMillis = after,
-                changePercentage = ScreenTimeFormatting.changePercentage(after, before),
+                changePercentage = if (comparisonComplete) {
+                    ScreenTimeFormatting.changePercentage(after, before)
+                } else null,
             )
         }.filter { it.beforeDailyMillis > 0L || it.sinceDailyMillis > 0L }
             .sortedByDescending { maxOf(it.beforeDailyMillis, it.sinceDailyMillis) }
@@ -166,55 +187,48 @@ class ScreenTimeRepository(private val context: Context) {
             baselineDays = IMPACT_BASELINE_DAYS,
             beforeDailyMillis = beforeDaily,
             sinceDailyMillis = sinceDaily,
-            changePercentage = ScreenTimeFormatting.changePercentage(sinceDaily, beforeDaily),
+            changePercentage = if (comparisonComplete) {
+                ScreenTimeFormatting.changePercentage(sinceDaily, beforeDaily)
+            } else null,
             timeSavedMillis = timeSaved,
             apps = apps,
+            comparisonWindowMillis = comparisonMillis,
+            historyComplete = comparisonComplete && since.historyComplete,
         )
     }
 
-    /** Saves every completed day since installation so all-time data survives OS pruning. */
+    /** Saves available completed days so local history survives Android's event pruning. */
     fun archiveCompletedDays() {
         if (!hasUsageAccess()) return
         val todayStart = startOfDay(System.currentTimeMillis())
-        val installTime = firstInstallTime()
-        val installDay = startOfDay(installTime)
-        val initialStart = minOf(startOfDay(firstInstallTime()), addDays(todayStart, -60))
-        var day = archive.latestDay()?.let { addDays(it, 1) } ?: initialStart
+        // Android may have deleted older events. Never write empty guesses over saved history.
+        val oldestCandidate = addDays(todayStart, -60)
+        var day = maxOf(archive.latestDay()?.let { addDays(it, 1) } ?: oldestCandidate, oldestCandidate)
         while (day < todayStart) {
             if (!archive.hasDay(day)) {
-                archive.replaceDay(day, filtered(reader.read(day, addDays(day, 1))))
+                val snapshot = filtered(reader.read(day, addDays(day, 1)))
+                if (snapshot.hasObservedUsage() ||
+                    snapshot.firstEventMillis?.let { it <= day } == true
+                ) archive.replaceDay(day, snapshot)
             }
             day = addDays(day, 1)
         }
 
-        // A previous version could archive the whole installation day. Always correct that one
-        // day so impact reporting starts at the exact time Scroll Guard was installed.
-        if (installDay < todayStart) {
-            archive.replaceDay(
-                installDay,
-                filtered(reader.read(installTime, addDays(installDay, 1))),
-            )
-        } else {
-            archive.deleteDay(installDay)
-        }
-
         // Earlier session reconstruction could leave an app active after it lost focus.
-        // Correct recent archived days once while Android still has their event history.
-        if (!repairPreferences.getBoolean("focused_sessions_v1", false)) {
+        // v2 also restores full installation-day totals for the screen-time dashboard. Partial
+        // impact boundaries are read separately; a daily archive must always represent one day.
+        if (!repairPreferences.getBoolean("focused_sessions_v2", false)) {
             var repairDay = addDays(todayStart, -30)
             while (repairDay < todayStart) {
                 if (archive.hasDay(repairDay)) {
-                    val rangeStart = if (repairDay == installDay) installTime else repairDay
-                    val corrected = filtered(reader.read(rangeStart, addDays(repairDay, 1)))
-                    if (corrected.sessions.isNotEmpty() ||
-                        corrected.screenOnMillis > 0L || corrected.pickups > 0
-                    ) {
+                    val corrected = filtered(reader.read(repairDay, addDays(repairDay, 1)))
+                    if (corrected.historyComplete && corrected.hasObservedUsage()) {
                         archive.replaceDay(repairDay, corrected)
                     }
                 }
                 repairDay = addDays(repairDay, 1)
             }
-            repairPreferences.edit().putBoolean("focused_sessions_v1", true).apply()
+            repairPreferences.edit().putBoolean("focused_sessions_v2", true).apply()
         }
     }
 
@@ -223,18 +237,33 @@ class ScreenTimeRepository(private val context: Context) {
         todayStart: Long,
         nowMillis: Long,
     ): ExactUsageSnapshot {
-        val archiveStart = startOfDay(rangeStart)
-        val archivedDurations = archive.appTotals(archiveStart, todayStart).toMutableMap()
-        val archivedSummary = archive.summary(archiveStart, todayStart)
-        val today = filtered(reader.read(maxOf(todayStart, rangeStart), nowMillis))
-        today.durations.forEach { (packageName, duration) ->
-            archivedDurations[packageName] = (archivedDurations[packageName] ?: 0L) + duration
+        if (nowMillis <= rangeStart) return ExactUsageSnapshot(emptyMap(), emptyList(), 0L, 0)
+        val plan = UsageRangePlanner.plan(rangeStart, nowMillis)
+        val archiveStart = plan.archived.start
+        val archiveEnd = minOf(todayStart, plan.archived.end)
+        val archivedDurations = archive.appTotals(archiveStart, archiveEnd).toMutableMap()
+        val archivedSummary = archive.summary(archiveStart, archiveEnd)
+        // Daily aggregate rows cannot be clipped to a time of day. Read the two partial
+        // boundaries separately so pre-start usage and whole previous days are never added.
+        val partials = plan.partials.map { filtered(reader.read(it.start, it.end)) }
+        var fullDaysComplete = true
+        var checkedDay = archiveStart
+        while (checkedDay < archiveEnd) {
+            if (!archive.hasCompleteDay(checkedDay)) fullDaysComplete = false
+            checkedDay = addDays(checkedDay, 1)
+        }
+        partials.forEach { partial ->
+            partial.durations.forEach { (packageName, duration) ->
+                archivedDurations[packageName] = (archivedDurations[packageName] ?: 0L) + duration
+            }
         }
         return ExactUsageSnapshot(
             durations = archivedDurations,
-            sessions = today.sessions,
-            screenOnMillis = archivedSummary.screenOnMillis + today.screenOnMillis,
-            pickups = archivedSummary.pickups + today.pickups,
+            sessions = partials.flatMap { it.sessions },
+            screenOnMillis = archivedSummary.screenOnMillis + partials.sumOf { it.screenOnMillis },
+            pickups = archivedSummary.pickups + partials.sumOf { it.pickups },
+            firstEventMillis = partials.mapNotNull { it.firstEventMillis }.minOrNull(),
+            historyComplete = fullDaysComplete && partials.all { it.historyComplete },
         )
     }
 
@@ -249,19 +278,13 @@ class ScreenTimeRepository(private val context: Context) {
             val sameElapsedTime = previousStart + (nowMillis - todayStart)
             filtered(reader.read(previousStart, sameElapsedTime))
         }
-        UsagePeriod.WEEK -> archivedSnapshot(addDays(currentStart, -7), currentStart)
-        UsagePeriod.MONTH -> archivedSnapshot(addDays(currentStart, -30), currentStart)
-        UsagePeriod.ALL -> null
-    }
-
-    private fun archivedSnapshot(startDay: Long, endDay: Long): ExactUsageSnapshot {
-        val summary = archive.summary(startDay, endDay)
-        return ExactUsageSnapshot(
-            durations = archive.appTotals(startDay, endDay),
-            sessions = emptyList(),
-            screenOnMillis = summary.screenOnMillis,
-            pickups = summary.pickups,
+        UsagePeriod.WEEK -> combinedSnapshot(
+            addDays(currentStart, -7), todayStart, addDays(nowMillis, -7),
         )
+        UsagePeriod.MONTH -> combinedSnapshot(
+            addDays(currentStart, -30), todayStart, addDays(nowMillis, -30),
+        )
+        UsagePeriod.ALL -> null
     }
 
     private fun filtered(snapshot: ExactUsageSnapshot): ExactUsageSnapshot {
@@ -280,9 +303,10 @@ class ScreenTimeRepository(private val context: Context) {
         todayStart: Long,
         nowMillis: Long,
     ): List<BucketBoundary> = when (period) {
-        UsagePeriod.DAY -> (0 until 24).map { hour ->
-            val start = todayStart + hour * HOUR_MILLIS
-            BucketBoundary(start, start + HOUR_MILLIS, hourLabel(hour))
+        UsagePeriod.DAY -> UsageRangePlanner.hours(todayStart).map { hour ->
+            val localHour = Calendar.getInstance().apply { timeInMillis = hour.start }
+                .get(Calendar.HOUR_OF_DAY)
+            BucketBoundary(hour.start, hour.end, hourLabel(localHour))
         }
         UsagePeriod.WEEK -> dailyBoundaries(currentStart, 7, "EEE")
         UsagePeriod.MONTH -> dailyBoundaries(currentStart, 30, "d")
@@ -310,11 +334,12 @@ class ScreenTimeRepository(private val context: Context) {
     }
 
     private fun bucketsForSnapshot(
+        period: UsagePeriod,
         snapshot: ExactUsageSnapshot,
         boundaries: List<BucketBoundary>,
         todayStart: Long,
     ): List<UsageBucket> {
-        if (boundaries.size == 24) {
+        if (period == UsagePeriod.DAY) {
             return boundaries.map { boundary ->
                 UsageBucket(boundary.label, durationInBoundary(snapshot.sessions, boundary))
             }
@@ -400,6 +425,9 @@ class ScreenTimeRepository(private val context: Context) {
         if (durationMillis <= 0L || windowMillis <= 0L) return 0L
         return (durationMillis.toDouble() * DAY_MILLIS / windowMillis.toDouble()).toLong()
     }
+
+    private fun ExactUsageSnapshot.hasObservedUsage(): Boolean =
+        sessions.isNotEmpty() || screenOnMillis > 0L || pickups > 0
 
     private fun hourLabel(hour: Int): String = when {
         hour == 0 -> "12a"
