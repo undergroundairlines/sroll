@@ -90,7 +90,8 @@ class InstagramHomeVideoTest {
         assertEquals(MediaRole.VIDEO, InstagramMediaSemantics.role("Video, private account content"))
         assertEquals(MediaRole.REEL, InstagramMediaSemantics.role("Play reel"))
         assertEquals(MediaRole.PHOTO, InstagramMediaSemantics.role("Photo by private account"))
-        for (value in listOf("Photo by Alice: a reel I like", "Reels", "Original audio", "Video games are fun", "Reel life"))
+        assertEquals(MediaRole.PHOTO, InstagramMediaSemantics.role("Photo by Alice: a reel I like"))
+        for (value in listOf("Reels", "Original audio", "Video games are fun", "Reel life"))
             assertEquals(MediaRole.NONE, InstagramMediaSemantics.role(value))
     }
     @Test fun aPlainAndroidViewLeafInHomeIsAmbiguousRatherThanPretendingItIsVideo() {
