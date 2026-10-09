@@ -278,8 +278,7 @@ class ShortFormContentBlockerService : AccessibilityService() {
         // query semantics when Instagram is left or its switch is off.
         setExpandedInstagramViews(true)
         val tree = foreground.root?.let { root -> runCatching {
-            root.refresh()
-            AccessibilityTreeSnapshot.from(root, includeLabels = false)
+            if (root.refresh()) AccessibilityTreeSnapshot.from(root, includeLabels = false) else null
         }.getOrNull() }
         // IME occlusion changes touch shielding, not the application's content coordinates.
         // Android can keep a focused chat composer below the keyboard and still accept typing.
@@ -385,7 +384,9 @@ class ShortFormContentBlockerService : AccessibilityService() {
         if (instagramMode != InstagramProtectionMode.SOCIAL || foreground.packageName != PackageConstants.INSTAGRAM_PACKAGE) return
         val now = SystemClock.uptimeMillis()
         if (now - lastHomeSkipAt < 700L) return
-        val tree = runCatching { AccessibilityTreeSnapshot.from(root, includeLabels = false) }.getOrNull()
+        val tree = runCatching {
+            if (root.refresh()) AccessibilityTreeSnapshot.from(root, includeLabels = false) else null
+        }.getOrNull()
         if (InstagramFeedPolicy.evaluate(instagramMode, tree, foreground.contentBounds) != InstagramScreen.HOME_REEL) return
         lastHomeSkipAt = now
         val accepted = findHomeScroll(root, foreground.bounds)?.let {
