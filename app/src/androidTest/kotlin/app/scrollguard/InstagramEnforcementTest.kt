@@ -377,6 +377,76 @@ class InstagramEnforcementTest {
         }
     }
 
+    @Test fun nativeHomeVideoWithoutReelIdsIsTouchableShieldedAndCanBeSkipped() {
+        runBlocking { preferences.requestInstagramProtectionMode(InstagramProtectionMode.SOCIAL, System.currentTimeMillis()) }
+        awaitCondition { ProtectionRuntime.state.value.instagramMode == InstagramProtectionMode.SOCIAL }
+        open("home_native_video")
+        awaitLock()
+        awaitCondition { ProtectionRuntime.state.value.screen == "Home video/Reel locked" }
+        val sample = requireNotNull(ProtectionRuntime.state.value.lastInstagram)
+        assertTrue("Ignored native child must be exposed by the service flag", sample.structuralNodes.any {
+            it.contains("android.view.TextureView")
+        })
+        assertTrue(sample.screen.contains("Home native TextureView"))
+        assertFalse(sample.structuralNodes.any { it.contains("clips_video_container") })
+        repeatFeedTouches()
+        assertEquals("Scroll: 0; clicks: 0", fixtureStatus())
+        // A page scroll can leave the bottom of a tall video visible. Every further explicit
+        // skip stays shielded until the CURRENT snapshot confirms the video is offscreen.
+        repeat(5) {
+            if (device.hasObject(guardTitle)) {
+                val button = requireNotNull(device.wait(Until.findObject(
+                    By.res("app.scrollguard", "guard_skip_home_video")), 8_000L))
+                button.click()
+                SystemClock.sleep(1000L)
+            }
+        }
+        assertUnlocked()
+        awaitCondition { ProtectionRuntime.state.value.screen.startsWith("Home posts allowed") }
+        assertTrue(fixtureStatus().startsWith("Scroll: "))
+        assertFalse(fixtureStatus().startsWith("Scroll: 0;"))
+        open("home_native_video")
+        awaitLock()
+        device.findObject(By.res("app.scrollguard", "guard_messages")).click()
+        assertTrue(device.wait(Until.hasObject(By.text("Fixture messages")), 8_000L))
+        assertUnlocked()
+        device.findObject(By.text("Open conversation")).click()
+        assertUnlocked()
+        typeAndSendMessage()
+        device.pressHome()
+        assertTrue(device.wait(Until.gone(guardTitle), 8_000L))
+    }
+
+    @Test fun aSuccessfulSkipActionWithoutMovementNeverUnlocksHomeVideo() {
+        runBlocking { preferences.requestInstagramProtectionMode(InstagramProtectionMode.SOCIAL, System.currentTimeMillis()) }
+        awaitCondition { ProtectionRuntime.state.value.instagramMode == InstagramProtectionMode.SOCIAL }
+        open("home_video_noop")
+        awaitLock()
+        device.findObject(By.res("app.scrollguard", "guard_skip_home_video")).click()
+        awaitCondition { ProtectionRuntime.state.value.lastAction.contains("native forward scroll accepted=true") }
+        SystemClock.sleep(3500L)
+        awaitLock()
+        assertTrue(ProtectionRuntime.state.value.lastAction.contains("ordinary post not confirmed"))
+        repeatFeedTouches()
+        assertEquals("Scroll: 0; clicks: 0", fixtureStatus())
+    }
+
+    @Test fun explicitHomeVideoRoleWorksWithoutNativePlayerOrReelIds() {
+        runBlocking { preferences.requestInstagramProtectionMode(InstagramProtectionMode.SOCIAL, System.currentTimeMillis()) }
+        awaitCondition { ProtectionRuntime.state.value.instagramMode == InstagramProtectionMode.SOCIAL }
+        open("home_video_role")
+        awaitLock()
+        awaitCondition { ProtectionRuntime.state.value.lastInstagram?.screen?.contains("Home explicit accessibility role VIDEO") == true }
+        repeatFeedTouches()
+        assertEquals("Scroll: 0; clicks: 0", fixtureStatus())
+        open("home")
+        assertUnlocked()
+        open("story")
+        assertUnlocked()
+        device.findObject(By.text("Next Story")).click()
+        assertTrue(device.hasObject(By.text("Story: 2")))
+    }
+
     @Test fun selectiveModeAllowsUnknownScreensWithoutRetainingAnOldShield() {
         open("unknown")
         awaitLock()

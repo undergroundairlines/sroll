@@ -1,4 +1,5 @@
 <resources>
+    <item name="fixture_generic_media" type="id" />
     <item name="fixture_choose_photo" type="id" />
     <item name="fixture_take_photo" type="id" />
     <item name="fixture_capture_photo" type="id" />

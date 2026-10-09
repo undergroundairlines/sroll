@@ -466,10 +466,10 @@ private fun InstagramProtectionSection(
             HorizontalDivider(color = MaterialTheme.colorScheme.outlineVariant)
             Row(verticalAlignment = Alignment.CenterVertically) {
                 Column(modifier = Modifier.weight(1f)) {
-                    Text("Block Reels and Explore only", style = MaterialTheme.typography.titleMedium, fontWeight = FontWeight.Bold)
-                    Text("Use this for texting, sending photos, Stories, profiles and Home posts. " +
-                        "Only positively recognised Reels and Explore are locked; unrecognised screens and missing trees stay usable. " +
-                        "Best effort: Instagram can hide feed identifiers, so some Reels or Explore may get through. " +
+                    Text("Block Reels and Home videos", style = MaterialTheme.typography.titleMedium, fontWeight = FontWeight.Bold)
+                    Text("Messages, photo sending, Stories, profiles and Home photo posts stay usable. " +
+                        "Visible Home videos/Reels, Reel browsing and Explore are locked. Use Skip this Home video to continue past one. " +
+                        "This includes friends' videos on Home. Best effort: a player Instagram hides from accessibility can get through; unknown screens remain usable. " +
                         "Shared Reels can play with scrolling and taps shielded.",
                         style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
                 }
@@ -480,7 +480,7 @@ private fun InstagramProtectionSection(
             Text("Current mode: ${when (mode) {
                 InstagramProtectionMode.APP_LOCK -> "Whole Instagram"
                 InstagramProtectionMode.FEED_LOCK -> "Entire Home feed locked (default)"
-                InstagramProtectionMode.SOCIAL -> "Reels and Explore only (best effort)"
+                InstagramProtectionMode.SOCIAL -> "Reels, Home videos and Explore (best effort)"
             }}", style = MaterialTheme.typography.bodySmall)
             Row(verticalAlignment = Alignment.CenterVertically) {
                 Column(modifier = Modifier.weight(1f)) {
@@ -553,7 +553,7 @@ private fun StrictModeSection(
                 val targetName = when (pendingTarget) {
                     StrictModePolicy.STRICT_MODE_TARGET -> "Strict Mode"
                     StrictModePolicy.INSTAGRAM_FEED_TARGET -> "Instagram messages and profiles"
-                    StrictModePolicy.INSTAGRAM_SOCIAL_TARGET -> "Instagram Reels and Explore only"
+                    StrictModePolicy.INSTAGRAM_SOCIAL_TARGET -> "Instagram selective blocking"
                     else -> {
                     packages.firstOrNull { it.packageName == pendingTarget }?.displayName
                         ?: "Blocker"

@@ -49,7 +49,7 @@ class ShortFormContentBlockerService : AccessibilityService() {
     private val handler = Handler(Looper.getMainLooper())
     private val scope = CoroutineScope(Dispatchers.Main.immediate + SupervisorJob())
     private val youtube = YouTubeShortsDetector()
-    private val shield by lazy { InstagramLockOverlay(this, ::navigateInstagram, ::leaveInstagram, ::backToMessages, ::watchShared) }
+    private val shield by lazy { InstagramLockOverlay(this, ::navigateInstagram, ::leaveInstagram, ::backToMessages, ::watchShared, ::skipHomeReel) }
     private var enabledPackages = emptySet<String>()
     private var instagramMode = InstagramProtectionMode.FEED_LOCK
     private var preferencesApplied = false
@@ -68,6 +68,9 @@ class ShortFormContentBlockerService : AccessibilityService() {
     private var pendingDestination: InstagramDestination? = null
     private var navigationRequestedAt = 0L
     private var pendingHomePackage: String? = null
+    private var homeSkipRequestedAt = 0L
+    private var homeSkipWindow = -1
+    private var lastHomeSkipAt = -10_000L
     private val windowPackages = mutableMapOf<Int, String>()
     private val storyNavigationLabel = Regex("\\bstor(y|ies)\\b")
     private val storyCreationLabel = Regex("\\b(add|create)\\b|^your story\\b")
@@ -111,7 +114,8 @@ class ShortFormContentBlockerService : AccessibilityService() {
         serviceInfo = serviceInfo.apply {
             eventTypes = AccessibilityEvent.TYPE_WINDOW_STATE_CHANGED or AccessibilityEvent.TYPE_WINDOW_CONTENT_CHANGED or
                 AccessibilityEvent.TYPE_VIEW_SCROLLED or AccessibilityEvent.TYPE_WINDOWS_CHANGED or AccessibilityEvent.TYPE_VIEW_CLICKED
-            flags = AccessibilityServiceInfo.FLAG_REPORT_VIEW_IDS or AccessibilityServiceInfo.FLAG_RETRIEVE_INTERACTIVE_WINDOWS
+            flags = AccessibilityServiceInfo.FLAG_REPORT_VIEW_IDS or AccessibilityServiceInfo.FLAG_RETRIEVE_INTERACTIVE_WINDOWS or
+                AccessibilityServiceInfo.FLAG_INCLUDE_NOT_IMPORTANT_VIEWS
             feedbackType = AccessibilityServiceInfo.FEEDBACK_GENERIC
             packageNames = null
             notificationTimeout = 30L
@@ -276,6 +280,22 @@ class ShortFormContentBlockerService : AccessibilityService() {
         // Android can keep a focused chat composer below the keyboard and still accept typing.
         val screen = InstagramFeedPolicy.evaluate(instagramMode, tree, foreground.contentBounds)
         val now = SystemClock.uptimeMillis()
+        if (homeSkipWindow >= 0) {
+            when {
+                foreground.windowId != homeSkipWindow -> {
+                    ProtectionRuntime.action("Home skip: application window changed; no destination claimed")
+                    homeSkipWindow = -1
+                }
+                screen == InstagramScreen.HOME_POSTS -> {
+                    ProtectionRuntime.action("Home skip: current Home no longer contains identified video; ordinary posts confirmed")
+                    homeSkipWindow = -1
+                }
+                now - homeSkipRequestedAt > 3000L -> {
+                    ProtectionRuntime.action("Home skip: ordinary post not confirmed; current protection retained")
+                    homeSkipWindow = -1
+                }
+            }
+        }
         pendingDestination?.let { destination ->
             val confirmed = (destination == InstagramDestination.MESSAGES && screen == InstagramScreen.MESSAGES) ||
                 (destination == InstagramDestination.PROFILE && screen == InstagramScreen.PROFILE) ||
@@ -316,7 +336,9 @@ class ShortFormContentBlockerService : AccessibilityService() {
                 root != null && findNavigation(root, InstagramDestination.MESSAGES) != null,
                 root != null && findNavigation(root, InstagramDestination.PROFILE) != null,
                 watchingSharedReel, instagramMode == InstagramProtectionMode.SOCIAL, canWatchShared, foreground.keyboardBounds,
-                canOpenStories = root != null && findNavigation(root, InstagramDestination.STORIES) != null))
+                canOpenStories = root != null && findNavigation(root, InstagramDestination.STORIES) != null,
+                homeReel = screen == InstagramScreen.HOME_REEL,
+                canSkipHomeReel = root != null && screen == InstagramScreen.HOME_REEL && findHomeScroll(root, foreground.bounds) != null))
             DetectionDiagnostics.reportActionStatus(result.packageName, BlockAction.LOCK_FEED,
                 if (!attached) DetectionActionStatus.FAILED else if (shield.isAttached) DetectionActionStatus.TOUCH_BLOCKED else DetectionActionStatus.READY)
             if (attached && shield.isAttached && !recordedLockEpisode && !watchingSharedReel) { blockStats.record(); recordedLockEpisode = true }
@@ -338,7 +360,51 @@ class ShortFormContentBlockerService : AccessibilityService() {
         sharedReelClickAt = -10_000L
         lastScreen = InstagramScreen.UNKNOWN
         pendingDestination = null
+        homeSkipWindow = -1
         shield.hide()
+    }
+
+    private fun skipHomeReel() {
+        val foreground = foregroundApplication() ?: return
+        val root = foreground.root ?: return
+        if (instagramMode != InstagramProtectionMode.SOCIAL || foreground.packageName != PackageConstants.INSTAGRAM_PACKAGE) return
+        val now = SystemClock.uptimeMillis()
+        if (now - lastHomeSkipAt < 700L) return
+        val tree = runCatching { AccessibilityTreeSnapshot.from(root, includeLabels = false) }.getOrNull()
+        if (InstagramFeedPolicy.evaluate(instagramMode, tree, foreground.contentBounds) != InstagramScreen.HOME_REEL) return
+        lastHomeSkipAt = now
+        val accepted = findHomeScroll(root, foreground.bounds)?.let {
+            runCatching { it.performAction(AccessibilityNodeInfo.ACTION_SCROLL_FORWARD) }.getOrDefault(false)
+        } ?: false
+        ProtectionRuntime.action("Home video skip: native forward scroll accepted=$accepted; shield retained until a new screen is confirmed")
+        if (accepted) { homeSkipWindow = foreground.windowId; homeSkipRequestedAt = now }
+        requestProtectionCheck()
+    }
+
+    /** A positively identified Home list only; never scroll an arbitrary root/gallery/chat. */
+    private fun findHomeScroll(root: AccessibilityNodeInfo, viewport: MediaBounds): AccessibilityNodeInfo? {
+        val queue = ArrayDeque<AccessibilityNodeInfo>().apply { add(root) }
+        var visited = 0
+        while (queue.isNotEmpty() && visited++ < 1200) {
+            val node = queue.removeFirst()
+            val id = node.viewIdResourceName.orEmpty().substringAfterLast('/')
+            var candidate: AccessibilityNodeInfo? = when {
+                id.startsWith("feed_recycler_view") -> node
+                id.startsWith("row_feed_profile_header") -> node.parent
+                else -> null
+            }
+            repeat(12) {
+                val current = candidate ?: return@repeat
+                val area = Rect().also(current::getBoundsInScreen)
+                if (current.isVisibleToUser && current.isScrollable && area.width() >= viewport.width * 0.55f &&
+                    area.height() >= viewport.height * 0.10f && current.actionList.any { it.id == AccessibilityNodeInfo.ACTION_SCROLL_FORWARD })
+                    return current
+                // The author row can identify its list, but not an unrelated outer application root.
+                if (id.startsWith("feed_recycler_view")) candidate = null else candidate = current.parent
+            }
+            for (index in 0 until node.childCount) node.getChild(index)?.let(queue::addLast)
+        }
+        return null
     }
     private fun exitBlockedApp(packageName: String, reason: String) {
         val now = SystemClock.uptimeMillis()

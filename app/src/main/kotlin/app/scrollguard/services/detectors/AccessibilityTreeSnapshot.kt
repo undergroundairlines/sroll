@@ -29,7 +29,10 @@ internal data class NodeSignal(
     val editable: Boolean = false,
     val className: String = "",
     val drawingOrder: Int = 0,
+    val mediaRole: MediaRole = MediaRole.NONE,
 )
+
+internal data class HomeVideoEvidence(val bounds: MediaBounds, val reason: String)
 
 internal class AccessibilityTreeSnapshot internal constructor(
     private val nodes: List<NodeSignal>,
@@ -133,8 +136,46 @@ internal class AccessibilityTreeSnapshot internal constructor(
     }.map { it.index }.toSet()
 
     fun hasHomeContent(viewport: MediaBounds): Boolean {
-        val histories = conversationHistories(viewport)
+        val histories = messageHistoryIndices(viewport)
         return homeNodes(viewport).any { index -> ancestors(index).none { it in histories } }
+    }
+
+    // A retained share preview does not become Home when a picker hides the chat composer.
+    // This owns preview media only; it cannot grant MESSAGES or permit a dedicated Reel pager.
+    private fun messageHistoryIndices(viewport: MediaBounds): Set<Int> = nodes.withIndex()
+        .filter { (_, n) -> n.onScreen(viewport) && n.id.substringAfterLast('/') in HISTORY_IDS }
+        .map { it.index }.toSet()
+
+    /** Media must belong to a live Home list/card, not merely coexist with a selected Home tab. */
+    private fun homeFeedIndices(viewport: MediaBounds): Set<Int> {
+        val feeds = contentIndices(viewport, 0.10f, setOf("feed_recycler_view"), exact = false)
+        val headerLists = homeNodes(viewport).filter { nodes[it].id.substringAfterLast('/').startsWith("row_feed_profile_header") }
+            .flatMap { header -> ancestors(header).drop(1).filter { index ->
+                val n = nodes[index]
+                n.onScreen(viewport) && n.width >= viewport.width * 0.55f &&
+                    (n.scrollable || n.className.endsWith("RecyclerView") || n.className == "android.widget.ScrollView")
+            } }
+        return feeds + headerLists
+    }
+
+    fun homeVideos(viewport: MediaBounds): List<HomeVideoEvidence> {
+        if (!hasHomeContent(viewport) || hasForegroundStory(viewport)) return emptyList()
+        val feeds = homeFeedIndices(viewport)
+        val safeOwners = messageHistoryIndices(viewport) + storyViewers(viewport)
+        return nodes.withIndex().mapNotNull { (index, n) ->
+            val path = ancestors(index)
+            if (!n.onScreen(viewport) || path.none { it in feeds } || path.any { it in safeOwners }) return@mapNotNull null
+            val bounds = MediaBounds(n.left, n.top, n.right, n.bottom).intersect(viewport) ?: return@mapNotNull null
+            if (bounds.width < viewport.width * 0.55f) return@mapNotNull null
+            val id = n.id.substringAfterLast('/')
+            val reason = when {
+                id in setOf("clips_video_container", "clips_media_component", "clips_single_media_component") -> "Home media ID $id"
+                InstagramMediaSemantics.isVideoView(n.className) -> "Home native ${n.className.substringAfterLast('.')}"
+                n.mediaRole != MediaRole.NONE -> "Home explicit accessibility role ${n.mediaRole}"
+                else -> return@mapNotNull null
+            }
+            HomeVideoEvidence(bounds, reason)
+        }.distinct()
     }
 
     private fun foregroundStories(viewport: MediaBounds): Set<Int> {
@@ -168,7 +209,7 @@ internal class AccessibilityTreeSnapshot internal constructor(
     /** Media in message history/Stories is preview content, not evidence of a separate scrolling feed. */
     fun hasExternalMedia(viewport: MediaBounds, fraction: Float, vararg ids: String,
         allowInlineMediaPreview: Boolean = true): Boolean {
-        val histories = if (allowInlineMediaPreview) conversationHistories(viewport) else emptySet()
+        val histories = if (allowInlineMediaPreview) messageHistoryIndices(viewport) else emptySet()
         val stories = foregroundStories(viewport)
         return contentIndices(viewport, fraction, ids.toSet(), exact = false).any { index ->
             ancestors(index).none { it in histories || (allowInlineMediaPreview && it in stories) } &&
@@ -177,11 +218,14 @@ internal class AccessibilityTreeSnapshot internal constructor(
     }
 
     /** No text, labels or account content; enough structure to diagnose from the phone. */
-    fun structuralReport(): List<String> = nodes.withIndex().filter { it.value.id.isNotBlank() }
-        .take(160).map { (index, n) ->
+    fun structuralReport(): List<String> = nodes.withIndex().filter {
+        it.value.id.isNotBlank() || InstagramMediaSemantics.isVideoView(it.value.className) || it.value.mediaRole != MediaRole.NONE
+    }.sortedByDescending { InstagramMediaSemantics.isVideoView(it.value.className) || it.value.mediaRole != MediaRole.NONE }
+        .take(180).map { (index, n) ->
             "$index parent=${n.parentIndex} ${n.id.substringAfterLast('/')} " +
                 "bounds=${n.left},${n.top},${n.right},${n.bottom} visible=${n.visible} " +
-                "selected=${n.selected} editable=${n.editable} scrollable=${n.scrollable} draw=${n.drawingOrder}"
+                "selected=${n.selected} editable=${n.editable} scrollable=${n.scrollable} draw=${n.drawingOrder} " +
+                "class=${n.className} mediaRole=${n.mediaRole}"
         }
     fun hasId(vararg fragments: String): Boolean = nodes.any { node ->
         fragments.any { fragment -> node.id.contains(fragment.normalized()) }
@@ -313,6 +357,7 @@ internal class AccessibilityTreeSnapshot internal constructor(
                     editable = node.isEditable,
                     className = node.className?.toString().orEmpty(),
                     drawingOrder = node.drawingOrder,
+                    mediaRole = InstagramMediaSemantics.role(node.contentDescription),
                 )
 
                 for (index in 0 until node.childCount) {

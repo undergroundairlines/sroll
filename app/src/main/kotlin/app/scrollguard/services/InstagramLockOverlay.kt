@@ -31,6 +31,8 @@ internal data class InstagramLockPanel(
     val canWatchShared: Boolean = false,
     val keyboardBounds: MediaBounds? = null,
     val canOpenStories: Boolean = false,
+    val homeReel: Boolean = false,
+    val canSkipHomeReel: Boolean = false,
 )
 
 /** A touchable full-window shield. No touches or swipes pass through to the feed. */
@@ -40,6 +42,7 @@ internal class InstagramLockOverlay(
     private val onLeave: () -> Unit,
     private val onSharedBack: () -> Unit,
     private val onWatchShared: () -> Unit,
+    private val onSkipHomeReel: () -> Unit,
 ) {
     private val windows = context.getSystemService(Context.WINDOW_SERVICE) as WindowManager
     private var view: View? = null
@@ -50,6 +53,7 @@ internal class InstagramLockOverlay(
     private var profile: Button? = null
     private var stories: Button? = null
     private var watchShared: Button? = null
+    private var skipHomeReel: Button? = null
     private var attachRequestedAt = 0L
     private val extraShields = mutableListOf<View>()
     val isShowing: Boolean get() = view != null || extraShields.isNotEmpty()
@@ -151,6 +155,7 @@ internal class InstagramLockOverlay(
         profile = null
         stories = null
         watchShared = null
+        skipHomeReel = null
         status = if (removed && extraShields.isEmpty()) "Removed" else "Removal failed; hidden; retry pending"
     }
 
@@ -171,11 +176,16 @@ internal class InstagramLockOverlay(
     }
 
     private fun updateLabels(panel: InstagramLockPanel) {
-        title?.text = if (panel.wholeApp) "Instagram is locked" else "Your feed is locked"
+        title?.text = when {
+            panel.wholeApp -> "Instagram is locked"
+            panel.homeReel -> "Home video blocked"
+            else -> "Your feed is locked"
+        }
         explanation?.text = if (panel.wholeApp) {
             "You chose to block the whole app. Your time is yours."
         } else {
-            if (panel.socialMode) "This Reel or Explore screen is locked.\nMessages, Stories and recognised posts stay usable."
+            if (panel.homeReel) "A Home video/Reel is visible.\nSkip it to continue to photo posts, or open messages or Stories."
+            else if (panel.socialMode) "This Reel or Explore screen is locked.\nMessages, Stories and photo posts stay usable."
             else "The entire Home feed, Reels and Explore are locked, including ordinary posts.\nOpen messages, Stories or your profile."
         }
         messages?.visibility = if (panel.wholeApp) View.GONE else View.VISIBLE
@@ -188,6 +198,9 @@ internal class InstagramLockOverlay(
         profile?.alpha = if (panel.canOpenProfile) 1f else 0.4f
         stories?.alpha = if (panel.canOpenStories) 1f else 0.4f
         watchShared?.visibility = if (panel.canWatchShared && !panel.wholeApp) View.VISIBLE else View.GONE
+        skipHomeReel?.visibility = if (panel.homeReel && !panel.wholeApp) View.VISIBLE else View.GONE
+        skipHomeReel?.isEnabled = panel.canSkipHomeReel
+        skipHomeReel?.alpha = if (panel.canSkipHomeReel) 1f else 0.4f
     }
 
     private fun buildView(): View {
@@ -272,11 +285,12 @@ internal class InstagramLockOverlay(
             return button
         }
         messages = button("Open messages", R.id.guard_messages, true) { onNavigate(InstagramDestination.MESSAGES) }
+        skipHomeReel = button("Skip this Home video", R.id.guard_skip_home_video, false, onSkipHomeReel)
         profile = button("Open my profile", R.id.guard_profile, false) { onNavigate(InstagramDestination.PROFILE) }
         stories = button("Open Stories", R.id.guard_stories, false) { onNavigate(InstagramDestination.STORIES) }
         watchShared = button("Watch without scrolling", R.id.guard_watch_shared, false, onWatchShared)
         button("Leave Instagram", R.id.guard_leave, false, onLeave)
-        content.addView(label("The feed stays locked until you change protection in Scroll Guard.",
+        content.addView(label("Home videos can be skipped. Protection settings are in Scroll Guard.",
             12f, Color.rgb(140, 140, 140)))
         root.addView(ScrollView(context).apply {
             isFillViewport = true

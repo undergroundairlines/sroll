@@ -7,6 +7,7 @@ import android.os.Bundle
 import android.os.Handler
 import android.os.Looper
 import android.view.View
+import android.view.TextureView
 import android.view.accessibility.AccessibilityEvent
 import android.widget.Button
 import android.widget.EditText
@@ -244,7 +245,7 @@ class MainActivity : Activity() {
                     media = true, ordinaryHome = false)
             }
             else -> {
-                if (screen == "home" || screen == "home_reel") {
+                if (screen == "home" || screen == "home_reel" || screen.startsWith("home_video") || screen == "home_native_video") {
                     body.addView(ImageButton(this).apply {
                         contentDescription = "Friend's story"
                         setImageResource(android.R.drawable.ic_menu_myplaces)
@@ -270,7 +271,11 @@ class MainActivity : Activity() {
                         visibility = View.INVISIBLE
                     })
                 }
-                addFeed(body, status, media = screen == "home_reel", ordinaryHome = screen == "home" || screen == "home_reel")
+                addFeed(body, status, media = screen == "home_reel",
+                    ordinaryHome = screen == "home" || screen == "home_reel" || screen.startsWith("home_video") || screen == "home_native_video",
+                    nativeVideo = screen == "home_native_video" || screen == "home_video_noop",
+                    describedVideo = screen == "home_video_role",
+                    refuseScroll = screen == "home_video_noop")
             }
         }
         val nav = LinearLayout(this)
@@ -300,10 +305,16 @@ class MainActivity : Activity() {
         }
     }
 
-    private fun addFeed(body: LinearLayout, status: TextView, media: Boolean, ordinaryHome: Boolean) {
+    private fun addFeed(body: LinearLayout, status: TextView, media: Boolean, ordinaryHome: Boolean,
+        nativeVideo: Boolean = false, describedVideo: Boolean = false, refuseScroll: Boolean = false) {
         var clicks = 0
         body.addView(status)
-        val scroll = ScrollView(this).apply { if (ordinaryHome) id = R.id.feed_recycler_view }
+        val scroll = object : ScrollView(this) {
+            override fun performAccessibilityAction(action: Int, arguments: Bundle?): Boolean {
+                if (refuseScroll && action == android.view.accessibility.AccessibilityNodeInfo.ACTION_SCROLL_FORWARD) return true
+                return super.performAccessibilityAction(action, arguments)
+            }
+        }.apply { if (ordinaryHome) id = R.id.feed_recycler_view }
         val posts = LinearLayout(this).apply { orientation = LinearLayout.VERTICAL }
         if (ordinaryHome) posts.addView(TextView(this).apply {
             id = R.id.row_feed_profile_header
@@ -311,6 +322,19 @@ class MainActivity : Activity() {
             setPadding(20, 20, 20, 20)
         })
         repeat(50) { index ->
+            if (index == 0 && (nativeVideo || describedVideo)) {
+                val video = if (nativeVideo) TextureView(this) else FrameLayout(this).apply { contentDescription = "Video" }
+                video.id = R.id.fixture_generic_media
+                video.setOnClickListener {
+                    clicks++
+                    status.text = "Scroll: ${scroll.scrollY}; clicks: $clicks"
+                }
+                // The production service must explicitly request this native child. No clips/reels ID.
+                if (nativeVideo) video.importantForAccessibility = View.IMPORTANT_FOR_ACCESSIBILITY_NO
+                else video.importantForAccessibility = View.IMPORTANT_FOR_ACCESSIBILITY_YES
+                posts.addView(video, LinearLayout.LayoutParams(-1, 300))
+                return@repeat
+            }
             posts.addView(TextView(this).apply {
                 text = "Post $index"
                 textSize = 24f

@@ -15,7 +15,7 @@ privacy configuration, visual theme, application identity, and TikTok support ha
 - Home is locked even when it contains ordinary posts or exposes no Reel identifiers
 - Messages, profiles and Stories allowed only when their visible interface is positively identified
 - Conversations also accept connected message-history and editable-composer structure, including with the keyboard open
-- Optional **Block Reels and Explore only** mode: texting, sending photos, Stories and posts stay usable; positively recognised feeds stay locked (best effort)
+- Optional **Block Reels and Home videos** mode: texting, sending photos, Stories and posts stay usable; positively recognised feeds stay locked (best effort)
 - Shared viewers reached directly from a confirmed conversation can play behind a transparent touch shield; swiping onward and Instagram taps remain blocked
 - Lock-screen buttons open native messages, a Story or the user's profile without temporarily unlocking Home
 - Unknown/missing screen identities stay blocked; a missing message row does not invalidate an otherwise confirmed chat
@@ -41,6 +41,37 @@ privacy configuration, visual theme, application identity, and TikTok support ha
 
 ## How detection works
 
+### Home videos in 0.4.4
+
+The selective option is now **Block Reels and Home videos**. The service explicitly requests
+`FLAG_INCLUDE_NOT_IMPORTANT_VIEWS`, which Android documents as exposing views normally omitted
+from accessibility queries/events. It identifies visible `VideoView`/`TextureView` surfaces or fixed
+English media accessibility roles (for example, `Video` or `Play reel`) **inside a current Home list**.
+An existing Reel-media ID remains another supported signal. Selected tabs, captions, audio labels,
+generic `SurfaceView`s, offscreen/hidden media and an unrelated camera preview are insufficient.
+Current message and Story ownership excludes shared previews and retained background Home content.
+
+This is a targeted implementation improvement, not proof of the user's private Instagram layout.
+`TextureView` can render other graphics too: animated Home content can also be blocked. All identified
+Home videos are included, even friends' videos. Players Instagram does not expose can still get through
+in selective mode; whole-Home and whole-app modes remain the stronger options. No screenshots,
+screen recording, OCR model, new account permission or network access is used.
+
+The touchable shield appears only on the detected Home video/Reel episode in selective mode.
+**Skip this Home video** requests one `ACTION_SCROLL_FORWARD` on the positively identified native
+Home list. An accepted action never unlocks it by itself: a current scan must show ordinary Home
+content without identified video. A no-op or another visible video keeps the shield, and the user
+can request another skip. There is no automatic scrolling loop or timed safe-screen exemption.
+
+The local report now includes native view classes and fixed media-role enums, including anonymous
+video nodes without resource IDs. It excludes actual descriptions, captions and account content.
+The new Android scenarios use a real `TextureView` marked unimportant for accessibility, without
+Reel IDs, plus an explicit-role media surface and a native scroll action that falsely returns success.
+They test Android querying and touch/scroll mechanics, not real Instagram compatibility.
+
+Android references: [expanded view queries](https://developer.android.com/reference/android/accessibilityservice/AccessibilityServiceInfo#FLAG_INCLUDE_NOT_IMPORTANT_VIEWS),
+[native scrolling](https://developer.android.com/reference/android/view/accessibility/AccessibilityNodeInfo.AccessibilityAction#ACTION_SCROLL_FORWARD).
+
 The app uses an Android Accessibility Service after the user explicitly enables it. The YouTube
 detector scores several interface signals. Instagram uses a strict allowlist instead:
 Home, Reels, Explore and unrecognised screens receive a touchable full-window lock. Only confirmed
@@ -48,7 +79,7 @@ messages, profile or Story content removes it. Whole-app mode and TikTok use pac
 The default still locks the **entire Home feed, including ordinary posts**. Stored modes and switches
 are preserved during the update; a weaker mode is never silently selected.
 
-The optional **Block Reels and Explore only** mode is the selective mode for texting, sending photos,
+The optional **Block Reels and Home videos** mode is the selective mode for texting, sending photos,
 Stories, profiles and ordinary posts. In **0.4.3**, it locks only positively identified Reels and Explore
 content. Other screens remain usable even when their tree is missing or incomplete. A selected tab
 alone cannot trigger its popup. This intentionally allows unknown interfaces: unrecognised feeds can
@@ -60,7 +91,7 @@ exception. These flows can replace the chat's composer/history, so the allowlist
 as unknown and attach an opaque popup. The user's exact screen structure has not been supplied;
 this is a confirmed omission in the code, not a verified capture of their private Instagram interface.
 Selective mode no longer needs to guess those attachment IDs or retain a timed chat exemption.
-After updating, turn **Block Reels and Explore only** on. Saved modes and Strict Mode are preserved;
+After updating, turn **Block Reels and Home videos** on. Saved modes and Strict Mode are preserved;
 changing from feed lock or whole-app lock still obeys the persistent 30-minute Strict Mode wait.
 
 In 0.4.2, message scrolling does not require every message descendant to remain available.
@@ -98,8 +129,8 @@ and contain no captions, messages, usernames, or account content.
 
 ## Install a test build
 
-1. Download the supplied `scroll-guard-0.4.3.apk` on the phone and install **over** the existing app.
-   Do not uninstall or clear data. The package is `app.scrollguard`, versionCode **403**.
+1. Download the supplied `scroll-guard-0.4.4.apk` on the phone and install **over** the existing app.
+   Do not uninstall or clear data. The package is `app.scrollguard`, versionCode **404**.
 2. On recent Android versions, open **App info** for Scroll Guard. If Android blocks the
    accessibility permission for a sideloaded app, open the three-dot menu and choose
    **Allow restricted settings**.
@@ -112,7 +143,7 @@ and contain no captions, messages, usernames, or account content.
 
 ## Detector test
 
-1. Start with Instagram on and **Block Reels and Explore only** off. Check **Phone protection check**.
+1. Start with Instagram on and **Block Reels and Home videos** off. Check **Phone protection check**.
 2. Open Instagram Home. A "Your feed is locked" screen should appear. Repeated swipes must not
    move the feed. This intentionally blocks ordinary Home posts too.
 3. Use **Open messages** or **Open my profile** on the lock. A recognised destination should open.
@@ -124,7 +155,7 @@ and contain no captions, messages, usernames, or account content.
 7. Verify normal YouTube videos are usable and Shorts navigate Back; TikTok should navigate Home.
 8. Open messages, then an individual conversation. Open the keyboard, type and send a message.
    Back out to Home and verify relocking. Repeat after reopening from Recents and screen sleep.
-9. Enable **Block Reels and Explore only** (after the Strict Mode wait if enabled). Check ordinary
+9. Enable **Block Reels and Home videos** (after the Strict Mode wait if enabled). Check ordinary
    Home posts and Stories, then open a friend's shared Reel from a conversation. If the opaque lock
    appears, use **Watch without scrolling** when offered. Try repeated swipes and taps: they must
    not advance or interact with the viewer. Use **Back to messages** and send another message.

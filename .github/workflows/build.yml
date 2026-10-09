@@ -137,24 +137,24 @@ jobs:
           set -euo pipefail
           # Check the exact APK once more immediately before copying/uploading it.
           bash scripts/verify-delivery-apk.sh app/build/outputs/apk/debug/app-debug.apk final-release
-          tag="v0.4.3-test-${GITHUB_SHA:0:7}"
+          tag="v0.4.4-test-${GITHUB_SHA:0:7}"
           mkdir -p "$RUNNER_TEMP/scroll-guard-delivery"
-          apk="$RUNNER_TEMP/scroll-guard-delivery/scroll-guard-0.4.3.apk"
-          report="$RUNNER_TEMP/scroll-guard-delivery/scroll-guard-0.4.3-verification.txt"
-          archive="$RUNNER_TEMP/scroll-guard-delivery/Scroll-Guard-0.4.3.zip"
+          apk="$RUNNER_TEMP/scroll-guard-delivery/scroll-guard-0.4.4.apk"
+          report="$RUNNER_TEMP/scroll-guard-delivery/scroll-guard-0.4.4-verification.txt"
+          archive="$RUNNER_TEMP/scroll-guard-delivery/Scroll-Guard-0.4.4.zip"
           cp app/build/outputs/apk/debug/app-debug.apk "$apk"
           cp app/build/reports/delivery/final-release.txt "$report"
           cmp app/build/outputs/apk/debug/app-debug.apk "$apk"
           zip -j "$archive" "$apk" "$report"
           # The ZIP is a permanent phone-download alternative and contains the exact verified APK.
-          unzip -p "$archive" scroll-guard-0.4.3.apk | cmp - "$apk"
+          unzip -p "$archive" scroll-guard-0.4.4.apk | cmp - "$apk"
           notes="$RUNNER_TEMP/scroll-guard-delivery/release-notes.md"
           cat > "$notes" <<'EOF'
-          Installable Scroll Guard 0.4.3 test update (app.scrollguard, versionCode 403).
+          Installable Scroll Guard 0.4.4 test update (app.scrollguard, versionCode 404).
 
-          Download scroll-guard-0.4.3.apk directly on your Android phone, or extract Scroll-Guard-0.4.3.zip and open its APK. Install over your existing Scroll Guard; do not uninstall or clear data.
+          Download scroll-guard-0.4.4.apk directly on your Android phone, or extract Scroll-Guard-0.4.4.zip and open its APK. Install over your existing Scroll Guard; do not uninstall or clear data.
 
-          Turn on "Block Reels and Explore only" to keep texting, photo selection/editing/sending, Stories, profiles and ordinary posts usable. Only positively recognised Reels and Explore receive a popup. Unrecognised feeds can get through in this best-effort mode. The separate entire-Home lock and whole-app lock remain available. Saved modes and the 30-minute Strict Mode deadline are preserved.
+          Turn on "Block Reels and Home videos". Visible Home video surfaces and explicit video/Reel roles are blocked inside the Home list, including when clips/reels resource IDs are absent. Use "Skip this Home video" to request one native forward scroll; the shield remains until a current scan confirms the video has gone. This includes friends' Home videos and may include animated Home content. Messages, photo sending, Stories, profiles and ordinary photo posts remain usable. Unrecognised players can get through in this best-effort mode. Entire-Home and whole-app locks remain separate; saved modes and the 30-minute Strict Mode deadline are preserved.
 
           The final APK has been checked against the original 0.4.0 signing certificate. The attached verification report includes its SHA-256 checksum.
 
@@ -163,6 +163,6 @@ jobs:
           if gh release view "$tag" --repo "$GITHUB_REPOSITORY" >/dev/null 2>&1; then
             gh release upload "$tag" "$apk" "$report" "$archive" --repo "$GITHUB_REPOSITORY" --clobber
           else
-            gh release create "$tag" "$apk" "$report" "$archive" --repo "$GITHUB_REPOSITORY" --target "$GITHUB_SHA" --prerelease --title "Scroll Guard 0.4.3 phone test (${GITHUB_SHA:0:7})" --notes-file "$notes"
+            gh release create "$tag" "$apk" "$report" "$archive" --repo "$GITHUB_REPOSITORY" --target "$GITHUB_SHA" --prerelease --title "Scroll Guard 0.4.4 phone test (${GITHUB_SHA:0:7})" --notes-file "$notes"
           fi
-          echo "Phone download: https://github.com/$GITHUB_REPOSITORY/releases/download/$tag/scroll-guard-0.4.3.apk" >> "$GITHUB_STEP_SUMMARY"
+          echo "Phone download: https://github.com/$GITHUB_REPOSITORY/releases/download/$tag/scroll-guard-0.4.4.apk" >> "$GITHUB_STEP_SUMMARY"

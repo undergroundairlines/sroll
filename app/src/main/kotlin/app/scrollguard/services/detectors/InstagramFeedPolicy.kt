@@ -7,6 +7,7 @@ import app.scrollguard.models.MediaBounds
 internal enum class InstagramScreen(val description: String, val allowed: Boolean = false) {
     HOME("Home feed locked"),
     HOME_POSTS("Home posts allowed — selective detection is best effort", true),
+    HOME_REEL("Home video/Reel locked"),
     REELS("Reels locked"),
     EXPLORE("Explore locked"),
     PROFILE("Profile allowed", true),
@@ -27,6 +28,8 @@ internal object InstagramFeedPolicy {
         InstagramScreen.STORY -> "Large current Story viewer; underlying Home is not the foreground screen"
         InstagramScreen.HOME -> "Home content or selected Home navigation; entire Home is locked"
         InstagramScreen.HOME_POSTS -> "Large visible Home container; no recognised on-screen Reel media (best effort)"
+        InstagramScreen.HOME_REEL -> tree?.homeVideos(viewport)?.joinToString("; ") { "${it.reason}; bounds=${it.bounds}" }
+            ?: "Home media unavailable; blocking not confirmed"
         InstagramScreen.REELS -> "Visible Reel viewer or recognised Home Reel media"
         InstagramScreen.EXPLORE -> "Visible Explore content or selected Explore navigation"
         InstagramScreen.APP_LOCK -> "Whole-app preference; no interface exceptions"
@@ -93,8 +96,9 @@ internal object InstagramFeedPolicy {
         if (identified in setOf(InstagramScreen.MESSAGES, InstagramScreen.STORY, InstagramScreen.PROFILE))
             return identified
         if (tree.hasExternalMedia(viewport, 0.40f, "clips_viewer_view_pager", "reels_viewer",
-                allowInlineMediaPreview = false) ||
-            tree.hasExternalMedia(viewport, 0.60f, "clips_video_container") ||
+                allowInlineMediaPreview = false)) return InstagramScreen.REELS
+        if (tree.homeVideos(viewport).isNotEmpty()) return InstagramScreen.HOME_REEL
+        if (tree.hasExternalMedia(viewport, 0.60f, "clips_video_container") ||
             (tree.hasHomeContent(viewport) && tree.hasExactOnScreenId(viewport,
                 "clips_video_container", "clips_media_component", "clips_single_media_component")))
             return InstagramScreen.REELS
