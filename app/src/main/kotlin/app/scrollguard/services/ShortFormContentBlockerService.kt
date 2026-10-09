@@ -114,8 +114,7 @@ class ShortFormContentBlockerService : AccessibilityService() {
         serviceInfo = serviceInfo.apply {
             eventTypes = AccessibilityEvent.TYPE_WINDOW_STATE_CHANGED or AccessibilityEvent.TYPE_WINDOW_CONTENT_CHANGED or
                 AccessibilityEvent.TYPE_VIEW_SCROLLED or AccessibilityEvent.TYPE_WINDOWS_CHANGED or AccessibilityEvent.TYPE_VIEW_CLICKED
-            flags = AccessibilityServiceInfo.FLAG_REPORT_VIEW_IDS or AccessibilityServiceInfo.FLAG_RETRIEVE_INTERACTIVE_WINDOWS or
-                AccessibilityServiceInfo.FLAG_INCLUDE_NOT_IMPORTANT_VIEWS
+            flags = AccessibilityServiceInfo.FLAG_REPORT_VIEW_IDS or AccessibilityServiceInfo.FLAG_RETRIEVE_INTERACTIVE_WINDOWS
             feedbackType = AccessibilityServiceInfo.FEEDBACK_GENERIC
             packageNames = null
             notificationTimeout = 30L
@@ -275,7 +274,13 @@ class ShortFormContentBlockerService : AccessibilityService() {
             return
         }
         lastInstagramWindowId = foreground.windowId
-        val tree = foreground.root?.let { runCatching { AccessibilityTreeSnapshot.from(it, includeLabels = false) }.getOrNull() }
+        // Expanded native queries are needed only for Instagram. Keep the existing YouTube
+        // query semantics when Instagram is left or its switch is off.
+        setExpandedInstagramViews(true)
+        val tree = foreground.root?.let { root -> runCatching {
+            root.refresh()
+            AccessibilityTreeSnapshot.from(root, includeLabels = false)
+        }.getOrNull() }
         // IME occlusion changes touch shielding, not the application's content coordinates.
         // Android can keep a focused chat composer below the keyboard and still accept typing.
         val screen = InstagramFeedPolicy.evaluate(instagramMode, tree, foreground.contentBounds)
@@ -352,6 +357,7 @@ class ShortFormContentBlockerService : AccessibilityService() {
     }
 
     private fun clearInstagram() {
+        setExpandedInstagramViews(false)
         recordedLockEpisode = false
         watchingSharedReel = false
         wasConversation = false
@@ -362,6 +368,15 @@ class ShortFormContentBlockerService : AccessibilityService() {
         pendingDestination = null
         homeSkipWindow = -1
         shield.hide()
+    }
+
+    private fun setExpandedInstagramViews(enabled: Boolean) {
+        val info = serviceInfo ?: return
+        val flag = AccessibilityServiceInfo.FLAG_INCLUDE_NOT_IMPORTANT_VIEWS
+        val expanded = info.flags and flag != 0
+        if (expanded == enabled) return
+        info.flags = if (enabled) info.flags or flag else info.flags and flag.inv()
+        serviceInfo = info
     }
 
     private fun skipHomeReel() {
