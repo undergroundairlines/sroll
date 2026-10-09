@@ -466,10 +466,10 @@ private fun InstagramProtectionSection(
             HorizontalDivider(color = MaterialTheme.colorScheme.outlineVariant)
             Row(verticalAlignment = Alignment.CenterVertically) {
                 Column(modifier = Modifier.weight(1f)) {
-                    Text("Block Reels and Home videos", style = MaterialTheme.typography.titleMedium, fontWeight = FontWeight.Bold)
-                    Text("Messages, photo sending, Stories, profiles and Home photo posts stay usable. " +
-                        "Visible Home videos/Reels, Reel browsing and Explore are locked. Use Skip this Home video to continue past one. " +
-                        "This includes friends' videos on Home. Best effort: a player Instagram hides from accessibility can get through; unknown screens remain usable. " +
+                    Text("Protect Home from Reels", style = MaterialTheme.typography.titleMedium, fontWeight = FontWeight.Bold)
+                    Text("Messages, photo sending, Stories, profiles and identified Home photos stay usable. " +
+                        "Home videos and large unlabelled media, Reel browsing and Explore are locked. Use Skip this Home media to continue. " +
+                        "Unlabelled Home photos may also be covered, including friends' posts. Best effort: an inaccessible player can still get through. " +
                         "Shared Reels can play with scrolling and taps shielded.",
                         style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
                 }
@@ -480,7 +480,7 @@ private fun InstagramProtectionSection(
             Text("Current mode: ${when (mode) {
                 InstagramProtectionMode.APP_LOCK -> "Whole Instagram"
                 InstagramProtectionMode.FEED_LOCK -> "Entire Home feed locked (default)"
-                InstagramProtectionMode.SOCIAL -> "Reels, Home videos and Explore (best effort)"
+                InstagramProtectionMode.SOCIAL -> "Home media, Reels and Explore (best effort)"
             }}", style = MaterialTheme.typography.bodySmall)
             Row(verticalAlignment = Alignment.CenterVertically) {
                 Column(modifier = Modifier.weight(1f)) {

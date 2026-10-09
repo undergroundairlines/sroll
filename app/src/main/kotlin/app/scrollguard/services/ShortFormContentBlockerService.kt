@@ -71,6 +71,8 @@ class ShortFormContentBlockerService : AccessibilityService() {
     private var homeSkipRequestedAt = 0L
     private var homeSkipWindow = -1
     private var lastHomeSkipAt = -10_000L
+    private var rememberedHomeMedia = emptySet<Int>()
+    private var rememberedHomeMediaWindow = -1
     private val windowPackages = mutableMapOf<Int, String>()
     private val storyNavigationLabel = Regex("\\bstor(y|ies)\\b")
     private val storyCreationLabel = Regex("\\b(add|create)\\b|^your story\\b")
@@ -282,7 +284,17 @@ class ShortFormContentBlockerService : AccessibilityService() {
         }.getOrNull() }
         // IME occlusion changes touch shielding, not the application's content coordinates.
         // Android can keep a focused chat composer below the keyboard and still accept typing.
-        val screen = InstagramFeedPolicy.evaluate(instagramMode, tree, foreground.contentBounds)
+        val remembered = if (rememberedHomeMediaWindow == foreground.windowId) rememberedHomeMedia else emptySet()
+        val evaluated = InstagramFeedPolicy.evaluate(instagramMode, tree, foreground.contentBounds, remembered)
+        val screen = if (tree == null && instagramMode == InstagramProtectionMode.SOCIAL && remembered.isNotEmpty() &&
+            lastScreen in HOME_MEDIA_SCREENS) lastScreen else evaluated
+        if (screen in HOME_MEDIA_SCREENS) {
+            if (tree != null) rememberedHomeMedia = tree.homeVideos(foreground.contentBounds, remembered).map { it.identity }.toSet()
+            rememberedHomeMediaWindow = foreground.windowId
+        } else {
+            rememberedHomeMedia = emptySet()
+            rememberedHomeMediaWindow = -1
+        }
         val now = SystemClock.uptimeMillis()
         if (homeSkipWindow >= 0) {
             when {
@@ -341,8 +353,9 @@ class ShortFormContentBlockerService : AccessibilityService() {
                 root != null && findNavigation(root, InstagramDestination.PROFILE) != null,
                 watchingSharedReel, instagramMode == InstagramProtectionMode.SOCIAL, canWatchShared, foreground.keyboardBounds,
                 canOpenStories = root != null && findNavigation(root, InstagramDestination.STORIES) != null,
-                homeReel = screen == InstagramScreen.HOME_REEL,
-                canSkipHomeReel = root != null && screen == InstagramScreen.HOME_REEL && findHomeScroll(root, foreground.bounds) != null))
+                homeReel = screen in HOME_MEDIA_SCREENS,
+                homeMediaUnknown = screen == InstagramScreen.HOME_MEDIA_UNKNOWN,
+                canSkipHomeReel = root != null && screen in HOME_MEDIA_SCREENS && findHomeScroll(root, foreground.bounds) != null))
             DetectionDiagnostics.reportActionStatus(result.packageName, BlockAction.LOCK_FEED,
                 if (!attached) DetectionActionStatus.FAILED else if (shield.isAttached) DetectionActionStatus.TOUCH_BLOCKED else DetectionActionStatus.READY)
             if (attached && shield.isAttached && !recordedLockEpisode && !watchingSharedReel) { blockStats.record(); recordedLockEpisode = true }
@@ -366,6 +379,8 @@ class ShortFormContentBlockerService : AccessibilityService() {
         lastScreen = InstagramScreen.UNKNOWN
         pendingDestination = null
         homeSkipWindow = -1
+        rememberedHomeMedia = emptySet()
+        rememberedHomeMediaWindow = -1
         shield.hide()
     }
 
@@ -387,7 +402,8 @@ class ShortFormContentBlockerService : AccessibilityService() {
         val tree = runCatching {
             if (root.refresh()) AccessibilityTreeSnapshot.from(root, includeLabels = false) else null
         }.getOrNull()
-        if (InstagramFeedPolicy.evaluate(instagramMode, tree, foreground.contentBounds) != InstagramScreen.HOME_REEL) return
+        val remembered = if (rememberedHomeMediaWindow == foreground.windowId) rememberedHomeMedia else emptySet()
+        if (InstagramFeedPolicy.evaluate(instagramMode, tree, foreground.contentBounds, remembered) !in HOME_MEDIA_SCREENS) return
         lastHomeSkipAt = now
         val accepted = findHomeScroll(root, foreground.bounds)?.let {
             runCatching { it.performAction(AccessibilityNodeInfo.ACTION_SCROLL_FORWARD) }.getOrDefault(false)
@@ -526,5 +542,8 @@ class ShortFormContentBlockerService : AccessibilityService() {
         ProtectionRuntime.connected(false)
         scope.cancel()
         super.onDestroy()
+    }
+    private companion object {
+        val HOME_MEDIA_SCREENS = setOf(InstagramScreen.HOME_REEL, InstagramScreen.HOME_MEDIA_UNKNOWN)
     }
 }

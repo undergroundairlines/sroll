@@ -154,7 +154,7 @@ jobs:
 
           Download scroll-guard-0.4.4.apk directly on your Android phone, or extract Scroll-Guard-0.4.4.zip and open its APK. Install over your existing Scroll Guard; do not uninstall or clear data.
 
-          Turn on "Block Reels and Home videos". Visible Home video surfaces and explicit video/Reel roles are blocked inside the Home list, including when clips/reels resource IDs are absent. Use "Skip this Home video" to request one native forward scroll; the shield remains until a current scan confirms the video has gone. This includes friends' Home videos and may include animated Home content. Messages, photo sending, Stories, profiles and ordinary photo posts remain usable. Unrecognised players can get through in this best-effort mode. Entire-Home and whole-app locks remain separate; saved modes and the 30-minute Strict Mode deadline are preserved.
+          Turn on "Protect Home from Reels". Confirmed Home videos and large unlabelled Home render surfaces are shielded even without Reel IDs. Android can hide a TextureView's real type behind plain View, so this conservative fallback can also cover unlabelled photos, friends' videos and animated Home content. Identified photos remain usable. "Skip this Home media" requests one native scroll and keeps the guard until current media has actually gone or is identified as a photo. Messages, photo sending and Stories keep separate rules. Inaccessible players may still get through. Entire-Home and whole-app locks and the persistent Strict Mode deadline are preserved.
 
           The final APK has been checked against the original 0.4.0 signing certificate. The attached verification report includes its SHA-256 checksum.
 

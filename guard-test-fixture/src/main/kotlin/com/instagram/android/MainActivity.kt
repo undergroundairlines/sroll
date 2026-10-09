@@ -13,6 +13,7 @@ import android.widget.Button
 import android.widget.EditText
 import android.widget.FrameLayout
 import android.widget.ImageButton
+import android.widget.ImageView
 import android.widget.LinearLayout
 import android.widget.ScrollView
 import android.widget.TextView
@@ -245,7 +246,7 @@ class MainActivity : Activity() {
                     media = true, ordinaryHome = false)
             }
             else -> {
-                if (screen == "home" || screen == "home_reel" || screen.startsWith("home_video") || screen == "home_native_video") {
+                if (screen == "home" || screen == "home_reel" || screen == "home_photo" || screen.startsWith("home_video") || screen == "home_native_video") {
                     body.addView(ImageButton(this).apply {
                         contentDescription = "Friend's story"
                         setImageResource(android.R.drawable.ic_menu_myplaces)
@@ -272,10 +273,10 @@ class MainActivity : Activity() {
                     })
                 }
                 addFeed(body, status, media = screen == "home_reel",
-                    ordinaryHome = screen == "home" || screen == "home_reel" || screen.startsWith("home_video") || screen == "home_native_video",
+                    ordinaryHome = screen == "home" || screen == "home_reel" || screen == "home_photo" || screen.startsWith("home_video") || screen == "home_native_video",
                     nativeVideo = screen == "home_native_video" || screen == "home_video_noop",
                     describedVideo = screen == "home_video_role",
-                    refuseScroll = screen == "home_video_noop")
+                    refuseScroll = screen == "home_video_noop", photo = screen == "home_photo")
             }
         }
         val nav = LinearLayout(this)
@@ -306,7 +307,7 @@ class MainActivity : Activity() {
     }
 
     private fun addFeed(body: LinearLayout, status: TextView, media: Boolean, ordinaryHome: Boolean,
-        nativeVideo: Boolean = false, describedVideo: Boolean = false, refuseScroll: Boolean = false) {
+        nativeVideo: Boolean = false, describedVideo: Boolean = false, refuseScroll: Boolean = false, photo: Boolean = false) {
         var clicks = 0
         body.addView(status)
         val scroll = object : ScrollView(this) {
@@ -322,6 +323,15 @@ class MainActivity : Activity() {
             setPadding(20, 20, 20, 20)
         })
         repeat(50) { index ->
+            if (index == 0 && photo) {
+                posts.addView(ImageView(this).apply {
+                    id = R.id.fixture_generic_media
+                    setImageResource(android.R.drawable.ic_menu_gallery)
+                    importantForAccessibility = View.IMPORTANT_FOR_ACCESSIBILITY_YES
+                    isClickable = true
+                }, LinearLayout.LayoutParams(-1, 300))
+                return@repeat
+            }
             if (index == 0 && (nativeVideo || describedVideo)) {
                 val video = if (nativeVideo) TextureView(this) else FrameLayout(this).apply { contentDescription = "Video" }
                 video.id = R.id.fixture_generic_media

@@ -33,6 +33,7 @@ internal data class InstagramLockPanel(
     val canOpenStories: Boolean = false,
     val homeReel: Boolean = false,
     val canSkipHomeReel: Boolean = false,
+    val homeMediaUnknown: Boolean = false,
 )
 
 /** A touchable full-window shield. No touches or swipes pass through to the feed. */
@@ -178,13 +179,15 @@ internal class InstagramLockOverlay(
     private fun updateLabels(panel: InstagramLockPanel) {
         title?.text = when {
             panel.wholeApp -> "Instagram is locked"
+            panel.homeMediaUnknown -> "Unlabelled Home media"
             panel.homeReel -> "Home video blocked"
             else -> "Your feed is locked"
         }
         explanation?.text = if (panel.wholeApp) {
             "You chose to block the whole app. Your time is yours."
         } else {
-            if (panel.homeReel) "A Home video/Reel is visible.\nSkip it to continue to photo posts, or open messages or Stories."
+            if (panel.homeMediaUnknown) "Instagram hasn't labelled this render surface. It could be a video or photo.\nSkip it, or open messages or Stories."
+            else if (panel.homeReel) "A Home video/Reel is visible.\nSkip it to continue to photo posts, or open messages or Stories."
             else if (panel.socialMode) "This Reel or Explore screen is locked.\nMessages, Stories and photo posts stay usable."
             else "The entire Home feed, Reels and Explore are locked, including ordinary posts.\nOpen messages, Stories or your profile."
         }
@@ -285,12 +288,12 @@ internal class InstagramLockOverlay(
             return button
         }
         messages = button("Open messages", R.id.guard_messages, true) { onNavigate(InstagramDestination.MESSAGES) }
-        skipHomeReel = button("Skip this Home video", R.id.guard_skip_home_video, false, onSkipHomeReel)
+        skipHomeReel = button("Skip this Home media", R.id.guard_skip_home_video, false, onSkipHomeReel)
         profile = button("Open my profile", R.id.guard_profile, false) { onNavigate(InstagramDestination.PROFILE) }
         stories = button("Open Stories", R.id.guard_stories, false) { onNavigate(InstagramDestination.STORIES) }
         watchShared = button("Watch without scrolling", R.id.guard_watch_shared, false, onWatchShared)
         button("Leave Instagram", R.id.guard_leave, false, onLeave)
-        content.addView(label("Home videos can be skipped. Protection settings are in Scroll Guard.",
+        content.addView(label("Home media can be skipped. Protection settings are in Scroll Guard.",
             12f, Color.rgb(140, 140, 140)))
         root.addView(ScrollView(context).apply {
             isFillViewport = true

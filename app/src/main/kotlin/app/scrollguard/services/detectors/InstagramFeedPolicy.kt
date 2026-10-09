@@ -8,6 +8,7 @@ internal enum class InstagramScreen(val description: String, val allowed: Boolea
     HOME("Home feed locked"),
     HOME_POSTS("Home posts allowed — selective detection is best effort", true),
     HOME_REEL("Home video/Reel locked"),
+    HOME_MEDIA_UNKNOWN("Unlabelled Home media locked"),
     REELS("Reels locked"),
     EXPLORE("Explore locked"),
     PROFILE("Profile allowed", true),
@@ -29,7 +30,8 @@ internal object InstagramFeedPolicy {
         InstagramScreen.HOME -> "Home content or selected Home navigation; entire Home is locked"
         InstagramScreen.HOME_POSTS -> "Large visible Home container; no recognised on-screen Reel media (best effort)"
         InstagramScreen.HOME_REEL -> tree?.homeVideos(viewport)?.joinToString("; ") { "${it.reason}; bounds=${it.bounds}" }
-            ?: "Home media unavailable; blocking not confirmed"
+            ?: "Current root unavailable; remembered Home shield retained pending a new classification"
+        InstagramScreen.HOME_MEDIA_UNKNOWN -> "Conservative Home fallback: media type is unlabelled; guard remains until this render node is no longer visible"
         InstagramScreen.REELS -> "Visible Reel viewer or recognised Home Reel media"
         InstagramScreen.EXPLORE -> "Visible Explore content or selected Explore navigation"
         InstagramScreen.APP_LOCK -> "Whole-app preference; no interface exceptions"
@@ -44,9 +46,10 @@ internal object InstagramFeedPolicy {
         mode: InstagramProtectionMode,
         tree: AccessibilityTreeSnapshot?,
         viewport: MediaBounds,
+        rememberedHomeMedia: Set<Int> = emptySet(),
     ): InstagramScreen {
         if (mode == InstagramProtectionMode.APP_LOCK) return InstagramScreen.APP_LOCK
-        if (mode == InstagramProtectionMode.SOCIAL) return selective(tree, viewport)
+        if (mode == InstagramProtectionMode.SOCIAL) return selective(tree, viewport, rememberedHomeMedia)
         if (tree == null) return InstagramScreen.UNKNOWN
 
         // A visible video/viewer wins over cached profile or inbox nodes. A small preview does
@@ -87,7 +90,7 @@ internal object InstagramFeedPolicy {
         return InstagramScreen.UNKNOWN
     }
 
-    private fun selective(tree: AccessibilityTreeSnapshot?, viewport: MediaBounds): InstagramScreen {
+    private fun selective(tree: AccessibilityTreeSnapshot?, viewport: MediaBounds, remembered: Set<Int>): InstagramScreen {
         // A gallery/camera/editor can replace every chat anchor and use an embedded surface.
         // Selective mode must not turn absence of private UI identifiers into an app-wide lock.
         // This is deliberately weaker than feed lock, including when a root is unavailable.
@@ -97,7 +100,9 @@ internal object InstagramFeedPolicy {
             return identified
         if (tree.hasExternalMedia(viewport, 0.40f, "clips_viewer_view_pager", "reels_viewer",
                 allowInlineMediaPreview = false)) return InstagramScreen.REELS
-        if (tree.homeVideos(viewport).isNotEmpty()) return InstagramScreen.HOME_REEL
+        val homeMedia = tree.homeVideos(viewport, remembered)
+        if (homeMedia.any { it.confirmedVideo }) return InstagramScreen.HOME_REEL
+        if (homeMedia.isNotEmpty()) return InstagramScreen.HOME_MEDIA_UNKNOWN
         if (tree.hasExternalMedia(viewport, 0.60f, "clips_video_container") ||
             (tree.hasHomeContent(viewport) && tree.hasExactOnScreenId(viewport,
                 "clips_video_container", "clips_media_component", "clips_single_media_component")))

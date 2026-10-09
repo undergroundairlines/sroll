@@ -30,9 +30,11 @@ internal data class NodeSignal(
     val className: String = "",
     val drawingOrder: Int = 0,
     val mediaRole: MediaRole = MediaRole.NONE,
+    val childCount: Int = 0,
+    val identity: Int = 0,
 )
 
-internal data class HomeVideoEvidence(val bounds: MediaBounds, val reason: String)
+internal data class HomeVideoEvidence(val bounds: MediaBounds, val reason: String, val identity: Int, val confirmedVideo: Boolean)
 
 internal class AccessibilityTreeSnapshot internal constructor(
     private val nodes: List<NodeSignal>,
@@ -158,7 +160,7 @@ internal class AccessibilityTreeSnapshot internal constructor(
         return feeds + headerLists
     }
 
-    fun homeVideos(viewport: MediaBounds): List<HomeVideoEvidence> {
+    fun homeVideos(viewport: MediaBounds, remembered: Set<Int> = emptySet()): List<HomeVideoEvidence> {
         if (!hasHomeContent(viewport) || hasForegroundStory(viewport)) return emptyList()
         val feeds = homeFeedIndices(viewport)
         val safeOwners = messageHistoryIndices(viewport) + storyViewers(viewport)
@@ -168,13 +170,17 @@ internal class AccessibilityTreeSnapshot internal constructor(
             val bounds = MediaBounds(n.left, n.top, n.right, n.bottom).intersect(viewport) ?: return@mapNotNull null
             if (bounds.width < viewport.width * 0.55f) return@mapNotNull null
             val id = n.id.substringAfterLast('/')
-            val reason = when {
-                id in setOf("clips_video_container", "clips_media_component", "clips_single_media_component") -> "Home media ID $id"
-                InstagramMediaSemantics.isVideoView(n.className) -> "Home native ${n.className.substringAfterLast('.')}"
-                n.mediaRole != MediaRole.NONE -> "Home explicit accessibility role ${n.mediaRole}"
+            val (reason, confirmed) = when {
+                id in setOf("clips_video_container", "clips_media_component", "clips_single_media_component") -> "Home media ID $id" to true
+                InstagramMediaSemantics.isVideoView(n.className) -> "Home native VideoView" to true
+                n.mediaRole in setOf(MediaRole.VIDEO, MediaRole.REEL) -> "Home explicit accessibility role ${n.mediaRole}" to true
+                n.mediaRole == MediaRole.NONE && InstagramMediaSemantics.isUnlabelledSurfaceClass(n.className) &&
+                    n.childCount == 0 && !n.editable && !n.scrollable &&
+                    (bounds.height >= viewport.height * 0.15f || n.identity in remembered) ->
+                        "Home unlabelled render surface; video type unknown" to false
                 else -> return@mapNotNull null
             }
-            HomeVideoEvidence(bounds, reason)
+            HomeVideoEvidence(bounds, reason, n.identity, confirmed)
         }.distinct()
     }
 
@@ -218,15 +224,20 @@ internal class AccessibilityTreeSnapshot internal constructor(
     }
 
     /** No text, labels or account content; enough structure to diagnose from the phone. */
-    fun structuralReport(): List<String> = nodes.withIndex().filter {
-        it.value.id.isNotBlank() || InstagramMediaSemantics.isVideoView(it.value.className) || it.value.mediaRole != MediaRole.NONE
-    }.sortedByDescending { InstagramMediaSemantics.isVideoView(it.value.className) || it.value.mediaRole != MediaRole.NONE }
-        .take(180).map { (index, n) ->
+    fun structuralReport(): List<String> {
+        val media = nodes.indices.filter { i ->
+            InstagramMediaSemantics.isVideoView(nodes[i].className) || nodes[i].mediaRole != MediaRole.NONE ||
+                (InstagramMediaSemantics.isUnlabelledSurfaceClass(nodes[i].className) && nodes[i].childCount == 0)
+        }.sortedByDescending { nodes[it].width.toLong() * nodes[it].height }
+        val reportIndices = (media.flatMap(::ancestors) + nodes.indices.filter { nodes[it].id.isNotBlank() }).distinct().take(180)
+        return reportIndices.map { index ->
+            val n = nodes[index]
             "$index parent=${n.parentIndex} ${n.id.substringAfterLast('/')} " +
                 "bounds=${n.left},${n.top},${n.right},${n.bottom} visible=${n.visible} " +
                 "selected=${n.selected} editable=${n.editable} scrollable=${n.scrollable} draw=${n.drawingOrder} " +
-                "class=${n.className} mediaRole=${n.mediaRole}"
+                "class=${n.className} mediaRole=${n.mediaRole} children=${n.childCount} identity=${n.identity}"
         }
+    }
     fun hasId(vararg fragments: String): Boolean = nodes.any { node ->
         fragments.any { fragment -> node.id.contains(fragment.normalized()) }
     }
@@ -358,6 +369,8 @@ internal class AccessibilityTreeSnapshot internal constructor(
                     className = node.className?.toString().orEmpty(),
                     drawingOrder = node.drawingOrder,
                     mediaRole = InstagramMediaSemantics.role(node.contentDescription),
+                    childCount = node.childCount,
+                    identity = node.hashCode(),
                 )
 
                 for (index in 0 until node.childCount) {

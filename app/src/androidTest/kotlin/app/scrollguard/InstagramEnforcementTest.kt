@@ -382,12 +382,12 @@ class InstagramEnforcementTest {
         awaitCondition { ProtectionRuntime.state.value.instagramMode == InstagramProtectionMode.SOCIAL }
         open("home_native_video")
         awaitLock()
-        awaitCondition { ProtectionRuntime.state.value.screen == "Home video/Reel locked" }
+        awaitCondition { ProtectionRuntime.state.value.screen == "Unlabelled Home media locked" }
         val sample = requireNotNull(ProtectionRuntime.state.value.lastInstagram)
         assertTrue("Ignored native child must be exposed by the service flag", sample.structuralNodes.any {
-            it.contains("android.view.TextureView")
+            it.contains("fixture_generic_media") && it.contains("class=android.view.View") && it.contains("children=0")
         })
-        assertTrue(sample.screen.contains("Home native TextureView"))
+        assertTrue(sample.screen.contains("media type is unlabelled"))
         assertFalse(sample.structuralNodes.any { it.contains("clips_video_container") })
         repeatFeedTouches()
         assertEquals("Scroll: 0; clicks: 0", fixtureStatus())
@@ -405,6 +405,8 @@ class InstagramEnforcementTest {
         awaitCondition { ProtectionRuntime.state.value.screen.startsWith("Home posts allowed") }
         assertTrue(fixtureStatus().startsWith("Scroll: "))
         assertFalse(fixtureStatus().startsWith("Scroll: 0;"))
+        open("home_photo")
+        assertUnlocked()
         open("home_native_video")
         awaitLock()
         device.findObject(By.res("app.scrollguard", "guard_messages")).click()
