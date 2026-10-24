@@ -50,7 +50,7 @@ class MainActivity : Activity() {
     override fun onBackPressed() {
         when (currentScreen) {
             "photo_gallery", "photo_camera", "photo_editor" -> render("conversation_photos")
-            "conversation", "conversation_photos", "conversation_scrolling", "shared_reel" -> render(if (currentScreen == "shared_reel") "conversation" else "messages")
+            "conversation", "conversation_photos", "conversation_scrolling", "conversation_retained_home", "shared_reel" -> render(if (currentScreen == "shared_reel") "conversation" else "messages")
             "messages", "profile", "story", "story_retained_home" -> render("home")
             else -> super.onBackPressed()
         }
@@ -101,7 +101,7 @@ class MainActivity : Activity() {
                     handler.postDelayed({ render("home", suppressChildEvents = true) }, 700L)
                 }
             }
-            "conversation", "conversation_immediate", "conversation_scrolling", "conversation_photos" -> {
+            "conversation", "conversation_immediate", "conversation_scrolling", "conversation_photos", "conversation_retained_home" -> {
                 body.addView(label("Fixture conversation"))
                 val history = LinearLayout(this).apply {
                     if (screen != "conversation_scrolling") id = R.id.message_list
@@ -278,6 +278,24 @@ class MainActivity : Activity() {
                     describedVideo = screen == "home_video_role",
                     refuseScroll = screen == "home_video_noop", photo = screen == "home_photo")
             }
+        }
+        if (screen == "conversation_retained_home") {
+            // Real native sibling drawing order, with accessibility-visible Home retained
+            // underneath a current conversation. No accessibility class/order overrides.
+            root.removeView(body)
+            val pages = FrameLayout(this)
+            val retainedHome = LinearLayout(this).apply {
+                id = R.id.feed_recycler_view
+                orientation = LinearLayout.VERTICAL
+                importantForAccessibility = View.IMPORTANT_FOR_ACCESSIBILITY_YES
+                addView(label("Retained Home header", R.id.row_feed_profile_header))
+                addView(label("Retained Home video", R.id.clips_video_container),
+                    LinearLayout.LayoutParams(-1, -1))
+            }
+            pages.addView(retainedHome, FrameLayout.LayoutParams(-1, -1))
+            body.setBackgroundColor(android.graphics.Color.WHITE)
+            pages.addView(body, FrameLayout.LayoutParams(-1, -1))
+            root.addView(pages, LinearLayout.LayoutParams(-1, 0, 1f))
         }
         val nav = LinearLayout(this)
         fun tab(textValue: String, viewId: Int, destination: String) {

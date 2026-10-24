@@ -172,22 +172,9 @@ class ShortFormContentBlockerService : AccessibilityService() {
             }
         }
         requestProtectionCheck()
-        if (packageName == PackageConstants.TIKTOK_PACKAGE && packageName in enabledPackages) {
-            if (foregroundApplication()?.packageName == packageName) exitBlockedApp(packageName, "TikTok blocked completely")
-        } else if (packageName == PackageConstants.YOUTUBE_PACKAGE && packageName in enabledPackages) {
-            val foreground = foregroundApplication() ?: return
-            val root = foreground.root ?: return
-            if (foreground.packageName != packageName) return
-            val result = youtube.detect(event, root, resources)
-            DetectionDiagnostics.report(result)
-            if (result.shouldBlock && SystemClock.uptimeMillis() - lastYouTubeActionAt >= 800L) {
-                lastYouTubeActionAt = SystemClock.uptimeMillis()
-                val accepted = performGlobalAction(GLOBAL_ACTION_BACK)
-                DetectionDiagnostics.reportActionStatus(packageName, BlockAction.BACK,
-                    if (accepted) DetectionActionStatus.PERFORMED else DetectionActionStatus.FAILED)
-                if (accepted) blockStats.record()
-            }
-        }
+        // All app enforcement runs through the coalesced foreground check. Besides avoiding
+        // duplicate traversals during event storms, the periodic check catches silent Shorts
+        // transitions and retries TikTok without depending on its private event behavior.
     }
 
     private data class ForegroundApplication(val packageName: String?, val windowId: Int,
@@ -252,6 +239,10 @@ class ShortFormContentBlockerService : AccessibilityService() {
         val foreground = foregroundApplication()
         val phoneLocked = (getSystemService(KEYGUARD_SERVICE) as KeyguardManager).isKeyguardLocked ||
             !(getSystemService(POWER_SERVICE) as PowerManager).isInteractive
+        if (preferencesApplied && !phoneLocked && foreground?.systemControls == false &&
+            foreground.packageName == PackageConstants.YOUTUBE_PACKAGE && foreground.packageName in enabledPackages) {
+            enforceYouTube(foreground)
+        }
         pendingHomePackage?.let { blockedPackage ->
             if (foreground?.packageName != null && foreground.packageName != blockedPackage && !foreground.systemControls && !phoneLocked) {
                 ProtectionRuntime.action("Confirmed $blockedPackage is no longer foreground after HOME request")
@@ -271,7 +262,8 @@ class ShortFormContentBlockerService : AccessibilityService() {
             }
             ProtectionRuntime.checked(foreground?.packageName, foreground?.windowId ?: -1,
                 if (foreground?.root == null) "Missing" else "Available (not traversed)", reason, shield.status)
-            if (foreground?.packageName == PackageConstants.TIKTOK_PACKAGE && foreground.packageName in enabledPackages)
+            if (!phoneLocked && foreground?.systemControls == false &&
+                foreground.packageName == PackageConstants.TIKTOK_PACKAGE && foreground.packageName in enabledPackages)
                 exitBlockedApp(PackageConstants.TIKTOK_PACKAGE, "TikTok blocked completely")
             return
         }
@@ -394,6 +386,25 @@ class ShortFormContentBlockerService : AccessibilityService() {
         if (expanded == enabled) return
         info.flags = if (enabled) info.flags or flag else info.flags and flag.inv()
         serviceInfo = info
+    }
+
+    @Suppress("DEPRECATION")
+    private fun enforceYouTube(foreground: ForegroundApplication) {
+        // A refreshed current application root is required before requesting BACK. Missing
+        // or expired roots replace the previous diagnostic result instead of retaining an
+        // old Shorts success. The detector does not depend on event payloads.
+        setExpandedInstagramViews(false)
+        val root = foreground.root?.takeIf { runCatching { it.refresh() }.getOrDefault(false) }
+        val sample = AccessibilityEvent.obtain(AccessibilityEvent.TYPE_WINDOW_CONTENT_CHANGED)
+        val result = try { youtube.detect(sample, root, resources) } finally { sample.recycle() }
+        DetectionDiagnostics.report(result)
+        if (!result.shouldBlock || SystemClock.uptimeMillis() - lastYouTubeActionAt < 800L) return
+        lastYouTubeActionAt = SystemClock.uptimeMillis()
+        val accepted = performGlobalAction(GLOBAL_ACTION_BACK)
+        ProtectionRuntime.action("YouTube Shorts BACK requested: accepted=$accepted; destination awaits a current foreground check")
+        DetectionDiagnostics.reportActionStatus(result.packageName, BlockAction.BACK,
+            if (accepted) DetectionActionStatus.PERFORMED else DetectionActionStatus.FAILED)
+        if (accepted) blockStats.record()
     }
 
     private fun skipHomeReel() {

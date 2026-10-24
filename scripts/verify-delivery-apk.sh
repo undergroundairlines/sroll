@@ -6,8 +6,8 @@ apk="${1:-app/build/outputs/apk/debug/app-debug.apk}"
 stage="${2:-final}"
 expected_certificate="5f9a5eccde1fc15e4c60cc8ce3de4eab317fac4770c7795cebc49200840ad0cf"
 expected_package="app.scrollguard"
-expected_version_code="404"
-expected_version_name="0.4.4"
+expected_version_code="405"
+expected_version_name="0.4.5"
 sdk="${ANDROID_SDK_ROOT:-${ANDROID_HOME:-}}"
 
 if [[ ! -f "$apk" ]]; then
@@ -61,4 +61,9 @@ Signing certificate SHA-256: $certificate
 APK SHA-256: $apk_sha256
 APK: $apk
 EOF
+for validation in unit-tests android-tests; do
+    if [[ -f "$report_directory/$validation.txt" ]]; then
+        cat "$report_directory/$validation.txt" >> "$report_directory/$stage.txt"
+    fi
+done
 cat "$report_directory/$stage.txt"

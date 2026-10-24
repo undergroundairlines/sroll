@@ -68,7 +68,7 @@ internal object InstagramFeedPolicy {
         if (tree.hasHomeContent(viewport)) {
             return InstagramScreen.HOME
         }
-        if (tree.hasVisibleContentId(viewport, 0.30f, "explore_grid", "explore_recycler_view")) {
+        if (tree.hasExternalMedia(viewport, 0.30f, "explore_grid", "explore_recycler_view")) {
             return InstagramScreen.EXPLORE
         }
         if ((tree.hasConversation(viewport) || tree.hasExactContentId(viewport, 0.30f,
@@ -110,7 +110,7 @@ internal object InstagramFeedPolicy {
             (tree.hasHomeContent(viewport) && tree.hasExactOnScreenId(viewport,
                 "clips_video_container", "clips_media_component", "clips_single_media_component")))
             return InstagramScreen.REELS
-        if (tree.hasVisibleContentId(viewport, 0.30f, "explore_grid", "explore_recycler_view"))
+        if (tree.hasExternalMedia(viewport, 0.30f, "explore_grid", "explore_recycler_view"))
             return InstagramScreen.EXPLORE
         if (tree.hasHomeContent(viewport)) return InstagramScreen.HOME_POSTS
         // Selected tabs are commonly retained behind a gallery or camera. They are not proof

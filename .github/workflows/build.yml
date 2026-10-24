@@ -34,20 +34,28 @@ jobs:
           key: scroll-guard-debug-signing-v1
 
       - name: Pin the signing key before emulator setup
+        id: signing
+        continue-on-error: true
+        env:
+          SCROLL_GUARD_SIGNING_KEY_BASE64: ${{ secrets.SCROLL_GUARD_SIGNING_KEY_BASE64 }}
         run: |
           set -euo pipefail
           mkdir -p "$HOME/.android" "$RUNNER_TEMP/scroll-guard-signing"
-          if [ ! -f "$HOME/.android/debug.keystore" ]; then
-            echo "::error::The Scroll Guard signing cache is missing. Restore the original 0.4.0 keystore; creating a new key would prevent updating the installed app and preserving its data."
+          pinned_store="$RUNNER_TEMP/scroll-guard-signing/debug.keystore"
+          if [ -n "$SCROLL_GUARD_SIGNING_KEY_BASE64" ]; then
+            printf '%s' "$SCROLL_GUARD_SIGNING_KEY_BASE64" | base64 --decode > "$pinned_store"
+          elif [ -f "$HOME/.android/debug.keystore" ]; then
+            cp "$HOME/.android/debug.keystore" "$pinned_store"
+          else
+            echo "::error::The original Scroll Guard signing key is missing. Restore it as the SCROLL_GUARD_SIGNING_KEY_BASE64 repository secret. Tests will still run with temporary test signing, but no update APK will be published."
             exit 1
           fi
-          cp "$HOME/.android/debug.keystore" "$RUNNER_TEMP/scroll-guard-signing/debug.keystore"
-          echo "SCROLL_GUARD_SIGNING_STORE=$RUNNER_TEMP/scroll-guard-signing/debug.keystore" >> "$GITHUB_ENV"
-          certificate=$(keytool -exportcert -keystore "$RUNNER_TEMP/scroll-guard-signing/debug.keystore" -storepass android -alias androiddebugkey | sha256sum | cut -d ' ' -f 1)
+          certificate=$(keytool -exportcert -keystore "$pinned_store" -storepass android -alias androiddebugkey | sha256sum | cut -d ' ' -f 1)
           if [ "$certificate" != "5f9a5eccde1fc15e4c60cc8ce3de4eab317fac4770c7795cebc49200840ad0cf" ]; then
             echo "::error::Restored signing key does not match the delivered 0.4.0 APK. Refusing an incompatible update."
             exit 1
           fi
+          echo "SCROLL_GUARD_SIGNING_STORE=$pinned_store" >> "$GITHUB_ENV"
           echo "Confirmed installed-app signing certificate SHA-256: $certificate"
 
       - name: Set up Gradle
@@ -71,9 +79,12 @@ jobs:
               for key in totals:
                   totals[key] += int(root.get(key, 0))
           print('Unit tests:', ', '.join(f'{key}={value}' for key,value in totals.items()))
+          assert totals['tests'] > totals['skipped'], 'No unit tests actually ran'
+          assert totals['failures'] == totals['errors'] == 0, 'Unit tests failed'
           PY
 
       - name: Verify APK identity after build
+        if: steps.signing.outcome == 'success'
         run: bash scripts/verify-delivery-apk.sh app/build/outputs/apk/debug/app-debug.apk after-build
 
       - name: Enable emulator acceleration
@@ -89,8 +100,24 @@ jobs:
           emulator-options: -no-window -gpu swiftshader_indirect -noaudio -no-boot-anim -no-snapshot
           script: gradle :guard-test-fixture:installDebug :app:connectedDebugAndroidTest --stacktrace; guard_test_result=$?; adb pull /sdcard/Download/scrollguard-verification app/build/reports/device; exit "$guard_test_result"
 
-      - name: Verify APK identity after instrumentation
+      - name: Record Android test totals
         if: always() && steps.build-apk.outcome == 'success'
+        run: |
+          python3 - <<'PY' | tee app/build/reports/delivery/android-tests.txt
+          import glob, xml.etree.ElementTree as ET
+          cases = []
+          for path in glob.glob('app/build/outputs/androidTest-results/connected/**/*.xml', recursive=True):
+              cases.extend(ET.parse(path).getroot().iter('testcase'))
+          totals = dict(tests=len(cases), failures=sum(c.find('failure') is not None for c in cases),
+              errors=sum(c.find('error') is not None for c in cases),
+              skipped=sum(c.find('skipped') is not None for c in cases))
+          print('Android 15 synthetic tests:', ', '.join(f'{key}={value}' for key,value in totals.items()))
+          assert totals['tests'] > totals['skipped'], 'No Android instrumentation tests actually ran'
+          assert totals['failures'] == totals['errors'] == 0, 'Android instrumentation failed'
+          PY
+
+      - name: Verify APK identity after instrumentation
+        if: always() && steps.build-apk.outcome == 'success' && steps.signing.outcome == 'success'
         run: bash scripts/verify-delivery-apk.sh app/build/outputs/apk/debug/app-debug.apk after-instrumentation
 
       - name: Upload verification reports
@@ -115,6 +142,10 @@ jobs:
 
       - name: Confirm the final deliverable identity
         run: |
+          if [ '${{ steps.signing.outcome }}' != 'success' ]; then
+            echo "::error::Verification completed with temporary test signing. An update APK cannot be delivered until the original signing key is restored. Do not uninstall the installed app."
+            exit 1
+          fi
           bash scripts/verify-delivery-apk.sh app/build/outputs/apk/debug/app-debug.apk final-delivery
           cat app/build/reports/delivery/final-delivery.txt >> "$GITHUB_STEP_SUMMARY"
           echo "Android instrumentation uses a synthetic Instagram fixture. It verifies Android mechanics, not compatibility with the user's real Instagram build." >> "$GITHUB_STEP_SUMMARY"
@@ -137,22 +168,24 @@ jobs:
           set -euo pipefail
           # Check the exact APK once more immediately before copying/uploading it.
           bash scripts/verify-delivery-apk.sh app/build/outputs/apk/debug/app-debug.apk final-release
-          tag="v0.4.4-test-${GITHUB_SHA:0:7}"
+          tag="v0.4.5-test-${GITHUB_SHA:0:7}"
           mkdir -p "$RUNNER_TEMP/scroll-guard-delivery"
-          apk="$RUNNER_TEMP/scroll-guard-delivery/scroll-guard-0.4.4.apk"
-          report="$RUNNER_TEMP/scroll-guard-delivery/scroll-guard-0.4.4-verification.txt"
-          archive="$RUNNER_TEMP/scroll-guard-delivery/Scroll-Guard-0.4.4.zip"
+          apk="$RUNNER_TEMP/scroll-guard-delivery/scroll-guard-0.4.5.apk"
+          report="$RUNNER_TEMP/scroll-guard-delivery/scroll-guard-0.4.5-verification.txt"
+          archive="$RUNNER_TEMP/scroll-guard-delivery/Scroll-Guard-0.4.5.zip"
           cp app/build/outputs/apk/debug/app-debug.apk "$apk"
           cp app/build/reports/delivery/final-release.txt "$report"
           cmp app/build/outputs/apk/debug/app-debug.apk "$apk"
           zip -j "$archive" "$apk" "$report"
           # The ZIP is a permanent phone-download alternative and contains the exact verified APK.
-          unzip -p "$archive" scroll-guard-0.4.4.apk | cmp - "$apk"
+          unzip -p "$archive" scroll-guard-0.4.5.apk | cmp - "$apk"
           notes="$RUNNER_TEMP/scroll-guard-delivery/release-notes.md"
           cat > "$notes" <<'EOF'
-          Installable Scroll Guard 0.4.4 test update (app.scrollguard, versionCode 404).
+          Installable Scroll Guard 0.4.5 test update (app.scrollguard, versionCode 405).
 
-          Download scroll-guard-0.4.4.apk directly on your Android phone, or extract Scroll-Guard-0.4.4.zip and open its APK. Install over your existing Scroll Guard; do not uninstall or clear data.
+          Download scroll-guard-0.4.5.apk directly on your Android phone, or extract Scroll-Guard-0.4.5.zip and open its APK. Install over your existing Scroll Guard; do not uninstall or clear data.
+
+          This audit fixes retained Home/Explore pages covering a foreground conversation, checks YouTube from the foreground watchdog when an accessibility event is missing, and makes per-app switches atomic. Re-enabling an app cancels its pending Strict Mode disable; existing deadlines and saved data remain intact.
 
           Turn on "Protect Home from Reels". Confirmed Home videos and large unlabelled Home render surfaces are shielded even without Reel IDs. Android can hide a TextureView's real type behind plain View, so this conservative fallback can also cover unlabelled photos, friends' videos and animated Home content. Identified photos remain usable. "Skip this Home media" requests one native scroll and keeps the guard until current media has actually gone or is identified as a photo. Messages, photo sending and Stories keep separate rules. Inaccessible players may still get through. Entire-Home and whole-app locks and the persistent Strict Mode deadline are preserved.
 
@@ -163,6 +196,6 @@ jobs:
           if gh release view "$tag" --repo "$GITHUB_REPOSITORY" >/dev/null 2>&1; then
             gh release upload "$tag" "$apk" "$report" "$archive" --repo "$GITHUB_REPOSITORY" --clobber
           else
-            gh release create "$tag" "$apk" "$report" "$archive" --repo "$GITHUB_REPOSITORY" --target "$GITHUB_SHA" --prerelease --title "Scroll Guard 0.4.4 phone test (${GITHUB_SHA:0:7})" --notes-file "$notes"
+            gh release create "$tag" "$apk" "$report" "$archive" --repo "$GITHUB_REPOSITORY" --target "$GITHUB_SHA" --prerelease --title "Scroll Guard 0.4.5 phone test (${GITHUB_SHA:0:7})" --notes-file "$notes"
           fi
-          echo "Phone download: https://github.com/$GITHUB_REPOSITORY/releases/download/$tag/scroll-guard-0.4.4.apk" >> "$GITHUB_STEP_SUMMARY"
+          echo "Phone download: https://github.com/$GITHUB_REPOSITORY/releases/download/$tag/scroll-guard-0.4.5.apk" >> "$GITHUB_STEP_SUMMARY"

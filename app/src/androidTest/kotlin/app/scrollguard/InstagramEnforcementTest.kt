@@ -733,6 +733,57 @@ class InstagramEnforcementTest {
         assertEquals(listOf("com.instagram.android"), reopenedPreferences.getTrackedPackages().first())
     }
 
+    @Test fun foregroundConversationAboveRetainedHomeCanTypeAndSend() {
+        for (mode in listOf(InstagramProtectionMode.FEED_LOCK, InstagramProtectionMode.SOCIAL)) {
+            runBlocking { preferences.requestInstagramProtectionMode(mode, System.currentTimeMillis()) }
+            open("conversation_retained_home")
+            assertTrue(device.wait(Until.hasObject(By.text("Fixture conversation")), 8_000L))
+            assertUnlocked()
+            assertTrue("Background Home must remain visible to accessibility: ${ProtectionRuntime.report()}",
+                ProtectionRuntime.state.value.lastInstagram?.structuralNodes.orEmpty().any {
+                    it.contains("feed_recycler_view") && it.contains("visible=true")
+                })
+            val attachments = ProtectionRuntime.state.value.overlayAttachmentCount
+            typeAndSendMessage()
+            assertEquals("Typing must not attach a shield over the foreground chat", attachments,
+                ProtectionRuntime.state.value.overlayAttachmentCount)
+            open("home_reel")
+            awaitLock()
+            repeatFeedTouches()
+            assertEquals("Scroll: 0; clicks: 0", fixtureStatus())
+        }
+    }
+
+    @Test fun reenablingProtectionCancelsItsPersistedStrictDisable() = runBlocking {
+        preferences.enableStrictMode()
+        preferences.togglePackage("com.instagram.android", false)
+        val pending = preferences.getStrictModeSettings().first()
+        assertEquals("com.instagram.android", pending.pendingTarget)
+        assertTrue(pending.unlockAtMillis > System.currentTimeMillis())
+        preferences.togglePackage("com.instagram.android", true)
+        val reopened = UserPreferencesProvider(instrumentation.targetContext)
+        assertEquals(null, reopened.getStrictModeSettings().first().pendingTarget)
+        assertFalse(reopened.completeStrictModeUnlockIfExpired(pending.unlockAtMillis + 1L))
+        assertTrue("com.instagram.android" in reopened.getTrackedPackages().first())
+        assertTrue(reopened.getStrictModeSettings().first().enabled)
+    }
+
+    @Test fun concurrentAppSwitchesPreserveEveryCompletedChange() = runBlocking {
+        val gate = kotlinx.coroutines.CompletableDeferred<Unit>()
+        val youtube = launch(Dispatchers.Default) { gate.await(); preferences.togglePackage("com.google.android.youtube", true) }
+        val tiktok = launch(Dispatchers.Default) { gate.await(); preferences.togglePackage("com.zhiliaoapp.musically", true) }
+        gate.complete(Unit)
+        youtube.join()
+        tiktok.join()
+        assertEquals(setOf("com.instagram.android", "com.google.android.youtube", "com.zhiliaoapp.musically"),
+            preferences.getTrackedPackages().first().toSet())
+        val removeInstagram = launch(Dispatchers.Default) { preferences.togglePackage("com.instagram.android", false) }
+        val removeYouTube = launch(Dispatchers.Default) { preferences.togglePackage("com.google.android.youtube", false) }
+        removeInstagram.join()
+        removeYouTube.join()
+        assertEquals(listOf("com.zhiliaoapp.musically"), preferences.getTrackedPackages().first())
+    }
+
     @Test fun publicPreferenceRemovalCannotBypassStrictDeadline() = runBlocking {
         preferences.enableStrictMode()
         preferences.setTrackedPackages(emptyList())

@@ -139,7 +139,23 @@ internal class AccessibilityTreeSnapshot internal constructor(
 
     fun hasHomeContent(viewport: MediaBounds): Boolean {
         val histories = messageHistoryIndices(viewport)
-        return homeNodes(viewport).any { index -> ancestors(index).none { it in histories } }
+        val conversations = foregroundConversations(viewport)
+        return homeNodes(viewport).any { index ->
+            ancestors(index).none { it in histories } && conversations.none { behind(index, it) }
+        }
+    }
+
+    /** A retained Home/Explore page can stay visible to accessibility behind an open chat.
+     * Require sibling drawing-order proof for every retained feed; chat anchors alone never
+     * override a current feed. The history identifies its owning branch at the common parent.
+     */
+    private fun foregroundConversations(viewport: MediaBounds): Set<Int> {
+        val histories = conversationHistories(viewport)
+        val feeds = homeNodes(viewport) + contentIndices(viewport, 0.30f,
+            setOf("explore_grid", "explore_recycler_view"), exact = false)
+        return histories.filter { history ->
+            feeds.filter { history !in ancestors(it) }.all { behind(it, history) }
+        }.toSet()
     }
 
     // A retained share preview does not become Home when a picker hides the chat composer.
@@ -217,9 +233,10 @@ internal class AccessibilityTreeSnapshot internal constructor(
         allowInlineMediaPreview: Boolean = true): Boolean {
         val histories = if (allowInlineMediaPreview) messageHistoryIndices(viewport) else emptySet()
         val stories = foregroundStories(viewport)
+        val conversations = foregroundConversations(viewport)
         return contentIndices(viewport, fraction, ids.toSet(), exact = false).any { index ->
             ancestors(index).none { it in histories || (allowInlineMediaPreview && it in stories) } &&
-                stories.none { behind(index, it) }
+                stories.none { behind(index, it) } && conversations.none { behind(index, it) }
         }
     }
 

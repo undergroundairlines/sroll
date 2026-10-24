@@ -18,7 +18,7 @@ privacy configuration, visual theme, application identity, and TikTok support ha
 - Optional **Protect Home from Reels** mode: texting, sending photos, Stories and posts stay usable; positively recognised feeds stay locked (best effort)
 - Shared viewers reached directly from a confirmed conversation can play behind a transparent touch shield; swiping onward and Instagram taps remain blocked
 - Lock-screen buttons open native messages, a Story or the user's profile without temporarily unlocking Home
-- Unknown/missing screen identities stay blocked; a missing message row does not invalidate an otherwise confirmed chat
+- Default feed lock protects unknown/missing screens; a missing message row does not invalidate an otherwise confirmed chat
 - Optional whole-Instagram block, with a package-level Home action and no UI allowlist
 - If the touch shield cannot attach, the service leaves Instagram instead of allowing the feed
 - Foreground-window watchdog catches silent transitions and removes the shield outside Instagram
@@ -40,6 +40,18 @@ privacy configuration, visual theme, application identity, and TikTok support ha
 - Nothing-inspired monochrome theme with a red status accent
 
 ## How detection works
+
+### Audit fixes in 0.4.5
+
+A structurally confirmed conversation can stay usable in front of a retained Home/Explore page
+only when sibling drawing order proves the feed is behind it. Reverse or unknown ordering cannot
+grant this exception. A dedicated Reel viewer still takes priority. These are synthetic structural
+regressions, not a capture of the user's private Instagram screen.
+
+YouTube is checked by the same foreground watchdog as Instagram and TikTok, so a missing event
+does not leave Shorts without a check. Per-app switches now read and update the latest stored
+state in one atomic DataStore edit. Re-enabling an app cancels its pending Strict Mode disable;
+other pending requests keep their original deadline. Saved preference keys and usage data remain intact.
 
 ### Home media in 0.4.4
 
@@ -86,11 +98,12 @@ The default still locks the **entire Home feed, including ordinary posts**. Stor
 are preserved during the update; a weaker mode is never silently selected.
 
 The optional **Protect Home from Reels** mode is the selective mode for texting, sending photos,
-Stories, profiles and ordinary posts. In **0.4.3**, it locks only positively identified Reels and Explore
-content. Other screens remain usable even when their tree is missing or incomplete. A selected tab
-alone cannot trigger its popup. This intentionally allows unknown interfaces: unrecognised feeds can
-get through, and it cannot distinguish friends' posts from recommendations. Feed lock still blocks
-every unknown screen and the entire Home feed; whole-app lock remains the strongest fallback.
+Stories, profiles and identified ordinary posts. It blocks supported Home media, Reels and Explore.
+Other unknown interfaces remain usable; an existing Home-media guard stays on through a missing or
+incomplete scan in the same confirmed window. A selected tab alone cannot trigger its popup.
+Unrecognised feeds can get through, and it cannot distinguish friends' posts from recommendations.
+Feed lock still blocks every unknown screen and the entire Home feed; whole-app lock remains the
+strongest fallback.
 
 The photo-sending report exposed a policy gap: earlier versions had no gallery, camera or photo-editor
 exception. These flows can replace the chat's composer/history, so the allowlist could classify them
@@ -135,8 +148,8 @@ and contain no captions, messages, usernames, or account content.
 
 ## Install a test build
 
-1. Download the supplied `scroll-guard-0.4.4.apk` on the phone and install **over** the existing app.
-   Do not uninstall or clear data. The package is `app.scrollguard`, versionCode **404**.
+1. Download the supplied `scroll-guard-0.4.5.apk` on the phone and install **over** the existing app.
+   Do not uninstall or clear data. The package is `app.scrollguard`, versionCode **405**.
 2. On recent Android versions, open **App info** for Scroll Guard. If Android blocks the
    accessibility permission for a sideloaded app, open the three-dot menu and choose
    **Allow restricted settings**.
@@ -162,7 +175,9 @@ and contain no captions, messages, usernames, or account content.
 8. Open messages, then an individual conversation. Open the keyboard, type and send a message.
    Back out to Home and verify relocking. Repeat after reopening from Recents and screen sleep.
 9. Enable **Protect Home from Reels** (after the Strict Mode wait if enabled). Check ordinary
-   Home posts and Stories, then open a friend's shared Reel from a conversation. If the opaque lock
+   Home photos, a Home Reel and Stories. On guarded Home media, repeated swipes/taps must not
+   reach the post. Use **Skip this Home media**; a no-op must stay guarded. An identified photo can
+   unlock. Unlabelled photos may also be guarded. Then open a friend's shared Reel from a conversation. If the opaque lock
    appears, use **Watch without scrolling** when offered. Try repeated swipes and taps: they must
    not advance or interact with the viewer. Use **Back to messages** and send another message.
 10. In selective mode, choose a gallery photo, scroll the gallery, edit/caption it and send it.
@@ -224,11 +239,18 @@ report labels time saved as an estimate and suppresses comparisons when boundary
 Use **Correct start date and time** to correct the saved start; no calendar date is inferred from
 the earlier statement about Friday at 2 pm.
 
-CI restores the original cached signing key and pins `SCROLL_GUARD_SIGNING_STORE` outside emulator
-setup. It refuses to generate a replacement on cache loss. It checks the **actual final APK** after
+CI restores the original key from the `SCROLL_GUARD_SIGNING_KEY_BASE64` repository secret when
+configured, otherwise from the existing signing cache, and pins `SCROLL_GUARD_SIGNING_STORE` outside
+emulator setup. A cache is not permanent key storage: [GitHub removes inactive caches](https://docs.github.com/en/actions/reference/workflows-and-actions/dependency-caching).
+Keep the original key backed up privately; never commit it or paste it into a diagnostic report.
+On key loss the unit/emulator checks can still run with temporary test signing, but no update APK
+is uploaded or published. Only the original key can produce a compatible update.
+CI checks the **actual final APK** after
 build, instrumentation and immediately before phone publication: certificate SHA-256
 `5f9a5eccde1fc15e4c60cc8ce3de4eab317fac4770c7795cebc49200840ad0cf`, package and version.
-Only successful checks publish the prerelease APK. Private signing material is never uploaded.
+Only successful checks publish the prerelease APK. The final report includes actual test totals;
+empty or entirely skipped suites fail verification. The obsolete one-off 0.4.3 publisher was removed
+so the active build workflow is the publication path. Private signing material is never uploaded.
 
 On a disposable configured emulator, run:
 

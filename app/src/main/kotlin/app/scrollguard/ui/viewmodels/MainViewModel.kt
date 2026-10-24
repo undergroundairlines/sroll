@@ -291,14 +291,8 @@ class MainViewModel(
     fun togglePackageTracking(packageName: String, enabled: Boolean) {
         Timber.i("Toggling package tracking: $packageName -> $enabled")
         viewModelScope.launch {
-            if (!enabled && _serviceState.value.strictModeEnabled) {
-                userPreferencesProvider.requestStrictModeUnlock(
-                    target = packageName,
-                    nowMillis = System.currentTimeMillis(),
-                )
-            } else {
-                userPreferencesProvider.togglePackage(packageName, enabled)
-            }
+            // The provider reads Strict Mode and app state atomically; UI state can lag an edit.
+            userPreferencesProvider.togglePackage(packageName, enabled)
         }
     }
 
