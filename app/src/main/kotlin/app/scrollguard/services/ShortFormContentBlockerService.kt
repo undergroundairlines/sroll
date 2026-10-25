@@ -49,6 +49,7 @@ class ShortFormContentBlockerService : AccessibilityService() {
     private val handler = Handler(Looper.getMainLooper())
     private val scope = CoroutineScope(Dispatchers.Main.immediate + SupervisorJob())
     private val youtube = YouTubeShortsDetector()
+    private val continuity = InstagramProtectionContinuity()
     private val shield by lazy { InstagramLockOverlay(this, ::navigateInstagram, ::leaveInstagram, ::backToMessages, ::watchShared, ::skipHomeReel) }
     private var enabledPackages = emptySet<String>()
     private var instagramMode = InstagramProtectionMode.FEED_LOCK
@@ -99,12 +100,27 @@ class ShortFormContentBlockerService : AccessibilityService() {
             eventCheckQueued = false
             runCatching { enforceInstagram() }.onFailure {
                 Timber.e(it, "Protection check failed")
-                shield.hide()
-                ProtectionRuntime.action("Protection check failed; shield removed")
                 val current = runCatching { foregroundApplication() }.getOrNull()
+                val phoneLocked = runCatching {
+                    (getSystemService(KEYGUARD_SERVICE) as KeyguardManager).isKeyguardLocked ||
+                        !(getSystemService(POWER_SERVICE) as PowerManager).isInteractive
+                }.getOrDefault(true)
+                val mustExit = preferencesApplied && PackageConstants.INSTAGRAM_PACKAGE in enabledPackages &&
+                    !phoneLocked && current?.packageName == PackageConstants.INSTAGRAM_PACKAGE && !current.systemControls &&
+                    (instagramMode != InstagramProtectionMode.SOCIAL || continuity.isGuarded(instagramMode, current.windowId))
+                // Do not tear down a valid touch barrier while an exit request is pending.
+                // Fresh bounds/IME geometry are required; an unconfirmed foreground hides it.
+                if (mustExit && current != null) {
+                    val retained = runCatching { shield.show(InstagramLockPanel(current.bounds,
+                        instagramMode == InstagramProtectionMode.APP_LOCK, false, false,
+                        socialMode = instagramMode == InstagramProtectionMode.SOCIAL,
+                        keyboardBounds = current.keyboardBounds)) }.getOrDefault(false)
+                    if (!retained) shield.hide()
+                } else shield.hide()
+                ProtectionRuntime.action("Protection check failed; ${if (mustExit) "exit requested with current guard where available" else "shield removed"}")
                 ProtectionRuntime.checked(current?.packageName, current?.windowId ?: -1,
-                    "Check failed", "Protection not confirmed; ${if (instagramMode == InstagramProtectionMode.SOCIAL) "selective mode keeps interface usable" else "request exit if Instagram is confirmed"}", shield.status)
-                if (instagramMode != InstagramProtectionMode.SOCIAL && current?.packageName == PackageConstants.INSTAGRAM_PACKAGE)
+                    "Check failed", "Protection not confirmed; ${if (mustExit) "request exit from confirmed Instagram" else "no feed guard established in current window"}", shield.status)
+                if (mustExit)
                     exitBlockedApp(PackageConstants.INSTAGRAM_PACKAGE, "Protection check failed")
             }
             lastProtectionCheckAt = SystemClock.uptimeMillis()
@@ -168,7 +184,9 @@ class ShortFormContentBlockerService : AccessibilityService() {
             // Remove shields promptly on confirmed exits without traversing a content tree.
             runCatching { foregroundApplication() }.getOrNull()?.let { current ->
                 if (current.packageName != null &&
-                    (current.packageName != PackageConstants.INSTAGRAM_PACKAGE || current.systemControls)) clearInstagram()
+                    (current.packageName != PackageConstants.INSTAGRAM_PACKAGE || current.systemControls))
+                    clearInstagram(preserveFeedGuard = current.systemControls && preferencesApplied &&
+                        PackageConstants.INSTAGRAM_PACKAGE in enabledPackages)
             }
         }
         requestProtectionCheck()
@@ -252,7 +270,12 @@ class ShortFormContentBlockerService : AccessibilityService() {
         }
         if (!preferencesApplied || PackageConstants.INSTAGRAM_PACKAGE !in enabledPackages || phoneLocked ||
             foreground?.packageName != PackageConstants.INSTAGRAM_PACKAGE || foreground.systemControls) {
-            clearInstagram()
+            // System controls and lock screens remove every shield. They do not prove that
+            // the Instagram feed behind them navigated away. Keep only its window-scoped
+            // guard; a confirmed different app, disabled switch or changed window resets it.
+            clearInstagram(preserveFeedGuard = preferencesApplied &&
+                PackageConstants.INSTAGRAM_PACKAGE in enabledPackages &&
+                (phoneLocked || foreground?.systemControls == true || foreground?.packageName == null))
             val reason = when {
                 !preferencesApplied -> "Waiting for preferences"
                 phoneLocked -> "Phone locked"
@@ -278,12 +301,16 @@ class ShortFormContentBlockerService : AccessibilityService() {
         // Android can keep a focused chat composer below the keyboard and still accept typing.
         val remembered = if (rememberedHomeMediaWindow == foreground.windowId) rememberedHomeMedia else emptySet()
         val evaluated = InstagramFeedPolicy.evaluate(instagramMode, tree, foreground.contentBounds, remembered)
-        val screen = if (tree == null && instagramMode == InstagramProtectionMode.SOCIAL && remembered.isNotEmpty() &&
-            lastScreen in HOME_MEDIA_SCREENS) lastScreen else evaluated
+        val quality = when { tree == null -> InstagramTreeQuality.MISSING
+            tree.truncated -> InstagramTreeQuality.INCOMPLETE; else -> InstagramTreeQuality.COMPLETE }
+        val decision = continuity.resolve(instagramMode, foreground.windowId, evaluated, quality,
+            confirmedHomePhoto = evaluated == InstagramScreen.HOME_POSTS &&
+                tree?.hasHomePhoto(foreground.contentBounds) == true)
+        val screen = decision.screen
         if (screen in HOME_MEDIA_SCREENS) {
             if (tree != null) {
                 val observedKeys = tree.homeVideos(foreground.contentBounds, remembered).map { it.identity }.toSet()
-                if (observedKeys.isNotEmpty() || !tree.truncated) rememberedHomeMedia = observedKeys
+                if (observedKeys.isNotEmpty() || (!decision.retained && !tree.truncated)) rememberedHomeMedia = observedKeys
             }
             rememberedHomeMediaWindow = foreground.windowId
         } else {
@@ -334,8 +361,11 @@ class ShortFormContentBlockerService : AccessibilityService() {
         val description = if (watchingSharedReel) "Shared Reel: viewing allowed, all Instagram gestures shielded" else screen.description
         lastScreen = screen
         val rootState = when { tree == null -> "Missing"; tree.truncated -> "Incomplete (${tree.nodeCount} nodes)"; else -> "Complete (${tree.nodeCount} nodes)" }
+        val continuityReason = if (decision.retained)
+            "Existing feed guard retained: current $quality interface has not confirmed a safe destination" else
+            "Current screen classified; no historical guard used"
         val result = DetectionResult(PackageConstants.INSTAGRAM_PACKAGE, if (screen.allowed) 0 else 1, 1,
-            listOf(description, InstagramFeedPolicy.reason(screen, tree, foreground.contentBounds), "Root $rootState"),
+            listOf(description, InstagramFeedPolicy.reason(screen, tree, foreground.contentBounds), "Root $rootState", continuityReason),
             tree?.diagnosticIdentifiers().orEmpty(), BlockAction.LOCK_FEED)
         DetectionDiagnostics.report(result)
         if (screen.allowed) {
@@ -360,10 +390,11 @@ class ShortFormContentBlockerService : AccessibilityService() {
         ProtectionRuntime.checked(foreground.packageName, foreground.windowId, rootState, description, shield.status,
             InstagramObservation(System.currentTimeMillis(), foreground.windowId,
                 "content=${foreground.contentBounds}; shield regions=${ShieldGeometry.regions(foreground.bounds, foreground.keyboardBounds)}", rootState,
-                "$description; ${InstagramFeedPolicy.reason(screen, tree, foreground.contentBounds)}", tree?.structuralReport().orEmpty()))
+                "$description; $continuityReason; ${InstagramFeedPolicy.reason(screen, tree, foreground.contentBounds)}", tree?.structuralReport().orEmpty()))
     }
 
-    private fun clearInstagram() {
+    private fun clearInstagram(preserveFeedGuard: Boolean = false) {
+        if (!preserveFeedGuard) continuity.reset()
         setExpandedInstagramViews(false)
         recordedLockEpisode = false
         watchingSharedReel = false
@@ -374,8 +405,10 @@ class ShortFormContentBlockerService : AccessibilityService() {
         lastScreen = InstagramScreen.UNKNOWN
         pendingDestination = null
         homeSkipWindow = -1
-        rememberedHomeMedia = emptySet()
-        rememberedHomeMediaWindow = -1
+        if (!preserveFeedGuard) {
+            rememberedHomeMedia = emptySet()
+            rememberedHomeMediaWindow = -1
+        }
         shield.hide()
     }
 

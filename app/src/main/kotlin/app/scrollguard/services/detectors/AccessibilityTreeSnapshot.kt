@@ -43,8 +43,18 @@ internal class AccessibilityTreeSnapshot internal constructor(
 ) {
     val nodeCount: Int get() = nodes.size
 
-    private fun NodeSignal.onScreen(viewport: MediaBounds): Boolean = visible &&
-        MediaBounds(left, top, right, bottom).intersect(viewport) != null
+    private fun NodeSignal.onScreen(viewport: MediaBounds): Boolean {
+        if (!visible || MediaBounds(left, top, right, bottom).intersect(viewport) == null) return false
+        // A changing accessibility tree can retain a child after its owning page is hidden.
+        // The child's own flag cannot turn an explicitly hidden cached page into current UI.
+        var parent = parentIndex
+        val visited = mutableSetOf<Int>()
+        while (parent >= 0) {
+            if (parent !in nodes.indices || !visited.add(parent) || !nodes[parent].visible) return false
+            parent = nodes[parent].parentIndex
+        }
+        return true
+    }
 
     fun hasExactOnScreenId(viewport: MediaBounds, vararg ids: String): Boolean = nodes.any {
         it.onScreen(viewport) && it.id.substringAfterLast('/') in ids
@@ -58,6 +68,31 @@ internal class AccessibilityTreeSnapshot internal constructor(
 
     /** Composer + history must belong to one visible content subtree, not cached parallel pages. */
     fun hasConversation(viewport: MediaBounds): Boolean = conversationHistories(viewport).isNotEmpty()
+
+    /** A header and details must identify one page, not two retained parallel pages. */
+    fun hasProfile(viewport: MediaBounds): Boolean {
+        val headers = nodes.indices.filter { index -> nodes[index].onScreen(viewport) &&
+            PROFILE_HEADER_IDS.any { nodes[index].id.substringAfterLast('/').startsWith(it) } }
+        val details = nodes.indices.filter { index -> nodes[index].onScreen(viewport) &&
+            PROFILE_DETAIL_IDS.any { nodes[index].id.substringAfterLast('/').startsWith(it) } }
+        return headers.any { header -> details.any { detail ->
+            val headerPath = ancestors(header)
+            val detailPath = ancestors(detail)
+            val owner = headerPath.drop(1).firstOrNull { it in detailPath.drop(1) }
+            if (owner == null || !nodes[owner].onScreen(viewport) ||
+                nodes[owner].className.contains("ViewPager", ignoreCase = true)) false
+            else {
+                val headerBranch = headerPath[headerPath.indexOf(owner) - 1]
+                val detailBranch = detailPath[detailPath.indexOf(owner) - 1]
+                val windowOwner = nodes[owner].parentIndex < 0 ||
+                    nodes[owner].className.endsWith("DecorView") || nodes[owner].id == "android:id/content"
+                val separateLargePages = listOf(headerBranch, detailBranch).all { index ->
+                    nodes[index].width >= viewport.width * 0.55f && nodes[index].height >= viewport.height * 0.50f
+                }
+                !separateLargePages && (!windowOwner || (headerBranch == header && detailBranch == detail))
+            }
+        } }
+    }
 
     private fun conversationHistories(viewport: MediaBounds): Set<Int> {
         val composers = nodes.withIndex().filter { (_, node) ->
@@ -168,9 +203,10 @@ internal class AccessibilityTreeSnapshot internal constructor(
     private fun homeFeedIndices(viewport: MediaBounds): Set<Int> {
         val feeds = contentIndices(viewport, 0.10f, setOf("feed_recycler_view"), exact = false)
         val headerLists = homeNodes(viewport).filter { nodes[it].id.substringAfterLast('/').startsWith("row_feed_profile_header") }
-            .flatMap { header -> ancestors(header).drop(1).filter { index ->
+            .mapNotNull { header -> ancestors(header).drop(1).firstOrNull { index ->
                 val n = nodes[index]
                 n.onScreen(viewport) && n.width >= viewport.width * 0.55f &&
+                    n.height >= viewport.height * 0.10f &&
                     (n.scrollable || n.className.endsWith("RecyclerView") || n.className == "android.widget.ScrollView")
             } }
         return feeds + headerLists
@@ -187,17 +223,34 @@ internal class AccessibilityTreeSnapshot internal constructor(
             if (bounds.width < viewport.width * 0.55f) return@mapNotNull null
             val id = n.id.substringAfterLast('/')
             val (reason, confirmed) = when {
-                id in setOf("clips_video_container", "clips_media_component", "clips_single_media_component") -> "Home media ID $id" to true
                 InstagramMediaSemantics.isVideoView(n.className) -> "Home native VideoView" to true
                 n.mediaRole in setOf(MediaRole.VIDEO, MediaRole.REEL) -> "Home explicit accessibility role ${n.mediaRole}" to true
+                id in HOME_MEDIA_IDS && n.mediaRole != MediaRole.PHOTO -> "Home media ID $id" to true
                 n.mediaRole == MediaRole.NONE && InstagramMediaSemantics.isUnlabelledSurfaceClass(n.className) &&
                     n.childCount == 0 && !n.editable && !n.scrollable &&
+                    path.none { nodes[it].mediaRole == MediaRole.PHOTO } &&
                     (bounds.height >= viewport.height * 0.15f || n.identity in remembered) ->
                         "Home unlabelled render surface; video type unknown" to false
                 else -> return@mapNotNull null
             }
             HomeVideoEvidence(bounds, reason, n.identity, confirmed)
         }.distinct()
+    }
+
+    /** An empty Home tree is not proof a guarded player has become an ordinary photo. */
+    fun hasHomePhoto(viewport: MediaBounds): Boolean {
+        if (!hasHomeContent(viewport) || hasForegroundStory(viewport) || homeVideos(viewport).isNotEmpty()) return false
+        val feeds = homeFeedIndices(viewport)
+        val safeOwners = messageHistoryIndices(viewport) + storyViewers(viewport)
+        return nodes.indices.any { index ->
+            val node = nodes[index]
+            val path = ancestors(index)
+            val bounds = MediaBounds(node.left, node.top, node.right, node.bottom).intersect(viewport)
+            node.onScreen(viewport) && bounds != null && bounds.width >= viewport.width * 0.55f &&
+                bounds.height >= viewport.height * 0.15f && path.any { it in feeds } &&
+                path.none { it in safeOwners || nodes[it].id.substringAfterLast('/').startsWith("row_feed_profile_header") } &&
+                (node.mediaRole == MediaRole.PHOTO || node.className == "android.widget.ImageView")
+        }
     }
 
     private fun foregroundStories(viewport: MediaBounds): Set<Int> {
@@ -235,6 +288,12 @@ internal class AccessibilityTreeSnapshot internal constructor(
         val stories = foregroundStories(viewport)
         val conversations = foregroundConversations(viewport)
         return contentIndices(viewport, fraction, ids.toSet(), exact = false).any { index ->
+            // Reused media wrappers can explicitly describe a photo. A dedicated Reel pager
+            // still counts as browsing, and a real VideoView child is evaluated independently.
+            val node = nodes[index]
+            val photoWrapper = node.id.substringAfterLast('/') in HOME_MEDIA_IDS &&
+                node.mediaRole == MediaRole.PHOTO && !InstagramMediaSemantics.isVideoView(node.className)
+            !photoWrapper &&
             ancestors(index).none { it in histories || (allowInlineMediaPreview && it in stories) } &&
                 stories.none { behind(index, it) } && conversations.none { behind(index, it) }
         }
@@ -264,8 +323,7 @@ internal class AccessibilityTreeSnapshot internal constructor(
     }
 
     fun hasOnScreenId(viewport: MediaBounds, vararg fragments: String): Boolean = nodes.any { node ->
-        node.visible && fragments.any { node.id.substringAfterLast('/').startsWith(it.normalized()) } &&
-            MediaBounds(node.left, node.top, node.right, node.bottom).intersect(viewport) != null
+        node.onScreen(viewport) && fragments.any { node.id.substringAfterLast('/').startsWith(it.normalized()) }
     }
 
     fun hasVisibleContentId(viewport: MediaBounds, minHeightFraction: Float,
@@ -345,6 +403,9 @@ internal class AccessibilityTreeSnapshot internal constructor(
 
     companion object {
         private const val MAX_NODES = 1200
+        private val HOME_MEDIA_IDS = setOf("clips_video_container", "clips_media_component", "clips_single_media_component")
+        private val PROFILE_HEADER_IDS = setOf("row_profile_header", "profile_header_full_name_above_vanity")
+        private val PROFILE_DETAIL_IDS = setOf("profile_user_info_compose_view", "profile_header_follow_button", "profile_header_bio")
         val COMPOSER_IDS = setOf("row_thread_composer_edittext", "direct_thread_composer_edittext",
             "message_composer_edit_text", "message_composer")
         val HISTORY_IDS = setOf("message_list", "direct_thread_message_list", "direct_thread_message_list_recycler_view",

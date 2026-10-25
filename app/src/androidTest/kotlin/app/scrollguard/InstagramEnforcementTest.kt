@@ -433,6 +433,82 @@ class InstagramEnforcementTest {
         assertEquals("Scroll: 0; clicks: 0", fixtureStatus())
     }
 
+    @Test fun activeHomeVideoAndReelsStayShieldedThroughUnknownAndEmptyCurrentTrees() {
+        runBlocking { preferences.requestInstagramProtectionMode(InstagramProtectionMode.SOCIAL, System.currentTimeMillis()) }
+        awaitCondition { ProtectionRuntime.state.value.instagramMode == InstagramProtectionMode.SOCIAL }
+        for (source in listOf("home_native_video", "reels")) {
+            open(source)
+            awaitLock()
+            awaitCondition { ProtectionRuntime.state.value.overlay.startsWith("Attached") }
+            val window = ProtectionRuntime.state.value.foregroundWindowId
+            var attachments = ProtectionRuntime.state.value.overlayAttachmentCount
+            assertEquals("Scroll: 0; clicks: 0", fixtureStatus())
+            for (gap in listOf("continuity_unknown", "continuity_empty")) {
+                val sampledAt = requireNotNull(ProtectionRuntime.state.value.lastInstagram).timestampMillis
+                open(gap)
+                awaitCondition {
+                    val current = ProtectionRuntime.state.value.lastInstagram
+                    current != null && current.timestampMillis > sampledAt && current.windowId == window &&
+                        current.rootState.startsWith("Complete") && current.structuralNodes.none { row ->
+                            listOf("feed_recycler_view", "clips_viewer_view_pager", "fixture_generic_media")
+                                .any { row.contains(it) }
+                        }
+                }
+                // The current root is present and structurally complete, but no longer says
+                // which feed is displayed. It is not evidence that a safe screen replaced it.
+                repeat(8) {
+                    SystemClock.sleep(100L)
+                    assertTrue("Active $source guard dropped during $gap: ${ProtectionRuntime.report()}",
+                        device.hasObject(guardTitle))
+                }
+                if (gap == "continuity_unknown") {
+                    assertEquals("The guard must stay attached before the intentional system suspension", attachments,
+                        ProtectionRuntime.state.value.overlayAttachmentCount)
+                    assertTrue(device.openNotification())
+                    assertTrue("System controls must never retain the Instagram shield",
+                        device.wait(Until.gone(guardTitle), 8_000L))
+                    val resumedAfter = System.currentTimeMillis()
+                    device.pressBack()
+                    awaitLock()
+                    awaitCondition {
+                        val state = ProtectionRuntime.state.value
+                        val current = state.lastInstagram
+                        state.overlay.startsWith("Attached") && current != null &&
+                            current.timestampMillis >= resumedAfter && current.windowId == window &&
+                            current.rootState.startsWith("Complete") && current.structuralNodes.none { row ->
+                                listOf("feed_recycler_view", "clips_viewer_view_pager", "fixture_generic_media")
+                                    .any { row.contains(it) }
+                            }
+                    }
+                    // This detach/re-attach is intentional. Further checks use the resumed
+                    // guard's baseline so an extra drop during empty-tree checks still fails.
+                    attachments = ProtectionRuntime.state.value.overlayAttachmentCount
+                }
+                repeatFeedTouches()
+                assertEquals("A transient tree must not remove and reattach the guard", attachments,
+                    ProtectionRuntime.state.value.overlayAttachmentCount)
+            }
+            open("continuity_restore")
+            awaitLock()
+            awaitCondition {
+                ProtectionRuntime.state.value.lastInstagram?.structuralNodes.orEmpty().any {
+                    it.contains(if (source == "reels") "clips_viewer_view_pager" else "feed_recycler_view")
+                }
+            }
+            assertEquals(window, ProtectionRuntime.state.value.foregroundWindowId)
+            assertEquals("Neither the real feed nor the empty native root may receive protected touches",
+                "Scroll: 0; clicks: 0", fixtureStatus())
+            open("conversation")
+            assertTrue(device.wait(Until.hasObject(By.text("Fixture conversation")), 8_000L))
+            assertUnlocked()
+            typeAndSendMessage()
+            open("home_native_video")
+            awaitLock()
+            repeatFeedTouches()
+            assertEquals("Scroll: 0; clicks: 0", fixtureStatus())
+        }
+    }
+
     @Test fun explicitHomeVideoRoleWorksWithoutNativePlayerOrReelIds() {
         runBlocking { preferences.requestInstagramProtectionMode(InstagramProtectionMode.SOCIAL, System.currentTimeMillis()) }
         awaitCondition { ProtectionRuntime.state.value.instagramMode == InstagramProtectionMode.SOCIAL }
@@ -442,6 +518,12 @@ class InstagramEnforcementTest {
         repeatFeedTouches()
         assertEquals("Scroll: 0; clicks: 0", fixtureStatus())
         open("home")
+        awaitLock()
+        repeat(8) {
+            SystemClock.sleep(100L)
+            assertTrue("A header-only Home snapshot must not release an active video guard", device.hasObject(guardTitle))
+        }
+        open("home_photo")
         assertUnlocked()
         open("story")
         assertUnlocked()

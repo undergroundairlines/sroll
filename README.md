@@ -41,6 +41,31 @@ privacy configuration, visual theme, application identity, and TikTok support ha
 
 ## How detection works
 
+### Feed continuity and media ownership in 0.4.6
+
+An active Home-media, Reels or Explore guard in selective mode now survives missing, incomplete,
+empty and unrecognised interface snapshots in the same confirmed Instagram window. Previously,
+a present but anonymous root could be treated as an allowed attachment screen and release that
+guard. A current confirmed conversation, Story, profile or complete Home screen with positively
+identified photo media can release it; an accepted navigation/scroll action cannot. System controls
+and screen locking remove the overlay without treating the hidden feed as a newly allowed screen.
+Leaving Instagram, disabling its switch, or changing application window clears the old guard.
+Diagnostics distinguish a retained guard from a newly identified screen.
+
+Home media must belong to the native Home list. A retained Home marker cannot turn an unrelated
+small gallery preview into a feed. An explicit PHOTO wrapper excludes anonymous render children
+and reused clip IDs; a real VideoView or explicit VIDEO/REEL child still wins. The conservative
+unlabelled Home-surface fallback also covers SurfaceView. Hidden ancestors exclude cached child
+signals, and profile markers from separate retained pages cannot combine to grant access.
+
+The new Android regression removes IDs and then native children from the same real fixture window,
+performs physical taps/swipes, restores it and checks native scroll/click counters. It also checks
+notification-shade suspension, types/sends a message and verifies Home relocking. These controlled
+synthetic transitions do not emulate a particular real Instagram release. A completely anonymous
+player first opened without Home/feed evidence still cannot be distinguished safely from a
+camera/editor in selective mode. Entire-Home and whole-app locks remain the stronger fallbacks.
+No real-phone compatibility or universal Home-Reel coverage is claimed.
+
 ### Audit fixes in 0.4.5
 
 A structurally confirmed conversation can stay usable in front of a retained Home/Explore page
@@ -78,8 +103,8 @@ Home list. An accepted action never releases the shield by itself. The current H
 show the blocked media has gone or has been positively identified as a photo. The current render
 node's structural identity keeps the shield on even when scrolling leaves only a thin visible strip.
 A no-op, another unlabelled surface or another video remains guarded. There is no automatic scroll
-loop or timed safe-screen exemption. A missing root in the same confirmed Instagram window retains
-an existing Home-media guard until a current screen is classified; leaving Instagram always clears it.
+loop or timed safe-screen exemption. A missing or unrecognised root in the same confirmed Instagram
+window retains an existing feed guard until a safe destination is confirmed; leaving Instagram clears it.
 
 The local report includes view classes, fixed media-role enums, child counts, structural node identity
 and parent chains, including nodes without resource IDs. It excludes actual descriptions, captions
@@ -99,8 +124,9 @@ are preserved during the update; a weaker mode is never silently selected.
 
 The optional **Protect Home from Reels** mode is the selective mode for texting, sending photos,
 Stories, profiles and identified ordinary posts. It blocks supported Home media, Reels and Explore.
-Other unknown interfaces remain usable; an existing Home-media guard stays on through a missing or
-incomplete scan in the same confirmed window. A selected tab alone cannot trigger its popup.
+Other unknown interfaces remain usable before a feed is guarded; an existing feed guard stays on
+through missing, incomplete or unrecognised scans in the same confirmed window. A selected tab
+alone cannot trigger its popup.
 Unrecognised feeds can get through, and it cannot distinguish friends' posts from recommendations.
 Feed lock still blocks every unknown screen and the entire Home feed; whole-app lock remains the
 strongest fallback.
@@ -148,8 +174,8 @@ and contain no captions, messages, usernames, or account content.
 
 ## Install a test build
 
-1. Download the supplied `scroll-guard-0.4.5.apk` on the phone and install **over** the existing app.
-   Do not uninstall or clear data. The package is `app.scrollguard`, versionCode **405**.
+1. Download the supplied `scroll-guard-0.4.6.apk` on the phone and install **over** the existing app.
+   Do not uninstall or clear data. The package is `app.scrollguard`, versionCode **406**.
 2. On recent Android versions, open **App info** for Scroll Guard. If Android blocks the
    accessibility permission for a sideloaded app, open the three-dot menu and choose
    **Allow restricted settings**.

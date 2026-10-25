@@ -168,24 +168,24 @@ jobs:
           set -euo pipefail
           # Check the exact APK once more immediately before copying/uploading it.
           bash scripts/verify-delivery-apk.sh app/build/outputs/apk/debug/app-debug.apk final-release
-          tag="v0.4.5-test-${GITHUB_SHA:0:7}"
+          tag="v0.4.6-test-${GITHUB_SHA:0:7}"
           mkdir -p "$RUNNER_TEMP/scroll-guard-delivery"
-          apk="$RUNNER_TEMP/scroll-guard-delivery/scroll-guard-0.4.5.apk"
-          report="$RUNNER_TEMP/scroll-guard-delivery/scroll-guard-0.4.5-verification.txt"
-          archive="$RUNNER_TEMP/scroll-guard-delivery/Scroll-Guard-0.4.5.zip"
+          apk="$RUNNER_TEMP/scroll-guard-delivery/scroll-guard-0.4.6.apk"
+          report="$RUNNER_TEMP/scroll-guard-delivery/scroll-guard-0.4.6-verification.txt"
+          archive="$RUNNER_TEMP/scroll-guard-delivery/Scroll-Guard-0.4.6.zip"
           cp app/build/outputs/apk/debug/app-debug.apk "$apk"
           cp app/build/reports/delivery/final-release.txt "$report"
           cmp app/build/outputs/apk/debug/app-debug.apk "$apk"
           zip -j "$archive" "$apk" "$report"
           # The ZIP is a permanent phone-download alternative and contains the exact verified APK.
-          unzip -p "$archive" scroll-guard-0.4.5.apk | cmp - "$apk"
+          unzip -p "$archive" scroll-guard-0.4.6.apk | cmp - "$apk"
           notes="$RUNNER_TEMP/scroll-guard-delivery/release-notes.md"
           cat > "$notes" <<'EOF'
-          Installable Scroll Guard 0.4.5 test update (app.scrollguard, versionCode 405).
+          Installable Scroll Guard 0.4.6 test update (app.scrollguard, versionCode 406).
 
-          Download scroll-guard-0.4.5.apk directly on your Android phone, or extract Scroll-Guard-0.4.5.zip and open its APK. Install over your existing Scroll Guard; do not uninstall or clear data.
+          Download scroll-guard-0.4.6.apk directly on your Android phone, or extract Scroll-Guard-0.4.6.zip and open its APK. Install over your existing Scroll Guard; do not uninstall or clear data.
 
-          This audit fixes retained Home/Explore pages covering a foreground conversation, checks YouTube from the foreground watchdog when an accessibility event is missing, and makes per-app switches atomic. Re-enabling an app cancels its pending Strict Mode disable; existing deadlines and saved data remain intact.
+          This update keeps active Home/Reels/Explore guards through empty or unrecognised trees and notification-shade suspension. Reused clip IDs cannot override explicit Home photos; hidden pages and split profile markers cannot unlock a feed. A current confirmed safe destination is required to release an existing guard. Earlier conversation, YouTube-watchdog and atomic preference fixes remain included. Existing data and Strict Mode deadlines remain intact.
 
           Turn on "Protect Home from Reels". Confirmed Home videos and large unlabelled Home render surfaces are shielded even without Reel IDs. Android can hide a TextureView's real type behind plain View, so this conservative fallback can also cover unlabelled photos, friends' videos and animated Home content. Identified photos remain usable. "Skip this Home media" requests one native scroll and keeps the guard until current media has actually gone or is identified as a photo. Messages, photo sending and Stories keep separate rules. Inaccessible players may still get through. Entire-Home and whole-app locks and the persistent Strict Mode deadline are preserved.
 
@@ -196,6 +196,6 @@ jobs:
           if gh release view "$tag" --repo "$GITHUB_REPOSITORY" >/dev/null 2>&1; then
             gh release upload "$tag" "$apk" "$report" "$archive" --repo "$GITHUB_REPOSITORY" --clobber
           else
-            gh release create "$tag" "$apk" "$report" "$archive" --repo "$GITHUB_REPOSITORY" --target "$GITHUB_SHA" --prerelease --title "Scroll Guard 0.4.5 phone test (${GITHUB_SHA:0:7})" --notes-file "$notes"
+            gh release create "$tag" "$apk" "$report" "$archive" --repo "$GITHUB_REPOSITORY" --target "$GITHUB_SHA" --prerelease --title "Scroll Guard 0.4.6 phone test (${GITHUB_SHA:0:7})" --notes-file "$notes"
           fi
-          echo "Phone download: https://github.com/$GITHUB_REPOSITORY/releases/download/$tag/scroll-guard-0.4.5.apk" >> "$GITHUB_STEP_SUMMARY"
+          echo "Phone download: https://github.com/$GITHUB_REPOSITORY/releases/download/$tag/scroll-guard-0.4.6.apk" >> "$GITHUB_STEP_SUMMARY"

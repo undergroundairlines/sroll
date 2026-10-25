@@ -25,7 +25,7 @@ internal object InstagramFeedPolicy {
         InstagramScreen.MESSAGES -> if (tree?.hasConversation(viewport) == true)
             "Visible message history and editable composer in one content subtree"
             else "Large visible exact inbox/thread container"
-        InstagramScreen.PROFILE -> "Visible profile header and separate profile details"
+        InstagramScreen.PROFILE -> "Visible profile header and details with one content owner"
         InstagramScreen.STORY -> "Large current Story viewer; underlying Home is not the foreground screen"
         InstagramScreen.HOME -> "Home content or selected Home navigation; entire Home is locked"
         InstagramScreen.HOME_POSTS -> "Large visible Home container; no recognised on-screen Reel media (best effort)"
@@ -77,11 +77,7 @@ internal object InstagramFeedPolicy {
             return InstagramScreen.MESSAGES
         }
         if (tree.truncated) return InstagramScreen.UNKNOWN
-        val profileHeader = tree.hasOnScreenId(viewport,
-            "row_profile_header", "profile_header_full_name_above_vanity")
-        val profileDetails = tree.hasOnScreenId(viewport,
-            "profile_user_info_compose_view", "profile_header_follow_button", "profile_header_bio")
-        if (profileHeader && profileDetails) return InstagramScreen.PROFILE
+        if (tree.hasProfile(viewport)) return InstagramScreen.PROFILE
 
         // Bottom-tab selected flags can be stale. They name a blocked screen but never grant access.
         if (tree.hasSelectedId("feed_tab", "home_tab")) return InstagramScreen.HOME
@@ -106,9 +102,9 @@ internal object InstagramFeedPolicy {
         // A missing child beyond the scan limit is not proof the guarded render node went away.
         if (remembered.isNotEmpty() && tree.truncated && tree.hasHomeContent(viewport))
             return InstagramScreen.HOME_MEDIA_UNKNOWN
-        if (tree.hasExternalMedia(viewport, 0.60f, "clips_video_container") ||
-            (tree.hasHomeContent(viewport) && tree.hasExactOnScreenId(viewport,
-                "clips_video_container", "clips_media_component", "clips_single_media_component")))
+        // Small Home media must have Home ownership, as checked above. Merely coexisting
+        // with a retained Home marker does not turn an unrelated picker/preview into a feed.
+        if (tree.hasExternalMedia(viewport, 0.60f, "clips_video_container"))
             return InstagramScreen.REELS
         if (tree.hasExternalMedia(viewport, 0.30f, "explore_grid", "explore_recycler_view"))
             return InstagramScreen.EXPLORE

@@ -36,9 +36,8 @@ class InstagramHomeVideoTest {
             node("com.instagram.android:id/feed_tab").copy(selected = true)
         assertEquals(InstagramScreen.HOME_POSTS, evaluate(nodes))
     }
-    @Test fun photoAndGenericSurfaceViewsAreNotAssumedToBeVideos() {
-        for (kind in listOf("android.widget.ImageView", "android.view.SurfaceView"))
-            assertEquals(InstagramScreen.HOME_POSTS, evaluate(home(node(parent = 1, kind = kind))))
+    @Test fun anImageViewPhotoIsNotAssumedToBeAVideo() {
+        assertEquals(InstagramScreen.HOME_POSTS, evaluate(home(node(parent = 1, kind = "android.widget.ImageView"))))
     }
     @Test fun hiddenOffscreenAndSmallAvatarVideosCannotLockHome() {
         for (n in listOf(node(parent = 1, kind = "android.view.TextureView", visible = false),

@@ -7,6 +7,8 @@ import android.os.Bundle
 import android.os.Handler
 import android.os.Looper
 import android.view.View
+import android.view.ViewGroup
+import android.view.MotionEvent
 import android.view.TextureView
 import android.view.accessibility.AccessibilityEvent
 import android.widget.Button
@@ -23,6 +25,11 @@ class MainActivity : Activity() {
     private val handler = Handler(Looper.getMainLooper())
     private var currentScreen = "home"
     private var photosSent = 0
+    private var renderedRoot: View? = null
+    private val transientNodeIds = mutableListOf<Pair<View, Int>>()
+    private val transientChildren = mutableListOf<Pair<View, ViewGroup.LayoutParams>>()
+    private var rootClickableBeforeGap = false
+    private var gapTouches = 0
 
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
@@ -33,7 +40,12 @@ class MainActivity : Activity() {
         super.onNewIntent(intent)
         handler.removeCallbacksAndMessages(null)
         setIntent(intent)
-        render(intent.getStringExtra("screen") ?: "home")
+        when (val screen = intent.getStringExtra("screen") ?: "home") {
+            "continuity_unknown" -> hideCurrentFeedStructure(empty = false)
+            "continuity_empty" -> hideCurrentFeedStructure(empty = true)
+            "continuity_restore" -> restoreCurrentFeedStructure()
+            else -> render(screen)
+        }
     }
 
     override fun onDestroy() {
@@ -57,6 +69,9 @@ class MainActivity : Activity() {
     }
 
     private fun render(screen: String, suppressChildEvents: Boolean = false) {
+        transientNodeIds.clear()
+        transientChildren.clear()
+        gapTouches = 0
         currentScreen = screen
         val root = object : LinearLayout(this) {
             override fun requestSendAccessibilityEvent(child: View, event: AccessibilityEvent): Boolean =
@@ -314,6 +329,7 @@ class MainActivity : Activity() {
         root.addView(nav)
         if (screen == "empty_tree") root.importantForAccessibility = View.IMPORTANT_FOR_ACCESSIBILITY_NO_HIDE_DESCENDANTS
         setContentView(root)
+        renderedRoot = root
         if (screen == "event_storm") {
             // Sustained callbacks must not occupy the service's main Looper ahead of layout.
             repeat(120) { index ->
@@ -322,6 +338,62 @@ class MainActivity : Activity() {
                 }, index * 35L)
             }
         }
+    }
+
+    /** Keep the real native feed and its touch/scroll counters alive in the same window.
+     * These emulator commands model a recomposed interface losing its accessible structure;
+     * they do not fabricate AccessibilityNodeInfo classes, resource IDs or drawing order. */
+    private fun hideCurrentFeedStructure(empty: Boolean) {
+        val root = renderedRoot ?: return
+        if (transientNodeIds.isEmpty()) {
+            fun stripIds(view: View) {
+                transientNodeIds.add(view to view.id)
+                view.id = View.NO_ID
+                if (view is ViewGroup) for (index in 0 until view.childCount) stripIds(view.getChildAt(index))
+            }
+            stripIds(root)
+        }
+        if (empty && root is ViewGroup && transientChildren.isEmpty()) {
+            // An actually empty native root, not an accessibility mock. Keep detached views
+            // so the same feed's counters survive this temporary recomposition gap.
+            for (index in 0 until root.childCount) {
+                val child = root.getChildAt(index)
+                transientChildren.add(child to child.layoutParams)
+            }
+            root.removeAllViews()
+            rootClickableBeforeGap = root.isClickable
+            root.isClickable = true
+            root.setOnTouchListener { touched, event ->
+                if (event.actionMasked == MotionEvent.ACTION_DOWN) gapTouches++
+                if (event.actionMasked == MotionEvent.ACTION_UP) touched.performClick()
+                true
+            }
+        }
+        announceCurrentTreeChange(root)
+    }
+
+    private fun restoreCurrentFeedStructure() {
+        val root = renderedRoot ?: return
+        transientNodeIds.forEach { (view, id) -> view.id = id }
+        transientNodeIds.clear()
+        if (root is ViewGroup && transientChildren.isNotEmpty()) {
+            transientChildren.forEach { (view, parameters) -> root.addView(view, parameters) }
+            transientChildren.clear()
+            root.setOnTouchListener(null)
+            root.isClickable = rootClickableBeforeGap
+        }
+        if (gapTouches > 0) root.findViewById<TextView>(R.id.fixture_status)?.let {
+            it.text = "${it.text}; empty-root touches: $gapTouches"
+        }
+        announceCurrentTreeChange(root)
+    }
+
+    @Suppress("DEPRECATION")
+    private fun announceCurrentTreeChange(root: View) {
+        val event = AccessibilityEvent.obtain(AccessibilityEvent.TYPE_WINDOW_CONTENT_CHANGED)
+        event.contentChangeTypes = AccessibilityEvent.CONTENT_CHANGE_TYPE_SUBTREE
+        event.setSource(root)
+        root.sendAccessibilityEventUnchecked(event)
     }
 
     private fun addFeed(body: LinearLayout, status: TextView, media: Boolean, ordinaryHome: Boolean,
@@ -361,6 +433,20 @@ class MainActivity : Activity() {
                 if (nativeVideo) video.importantForAccessibility = View.IMPORTANT_FOR_ACCESSIBILITY_NO
                 else video.importantForAccessibility = View.IMPORTANT_FOR_ACCESSIBILITY_YES
                 posts.addView(video, LinearLayout.LayoutParams(-1, 300))
+                return@repeat
+            }
+            if (nativeVideo || describedVideo) {
+                // An explicit skip can release only after current native photo content is
+                // positively identified. Generic post text is not proof a video is gone.
+                posts.addView(ImageView(this).apply {
+                    setImageResource(android.R.drawable.ic_menu_gallery)
+                    contentDescription = "Photo"
+                    importantForAccessibility = View.IMPORTANT_FOR_ACCESSIBILITY_YES
+                    setOnClickListener {
+                        clicks++
+                        status.text = "Scroll: ${scroll.scrollY}; clicks: $clicks"
+                    }
+                }, LinearLayout.LayoutParams(-1, 300))
                 return@repeat
             }
             posts.addView(TextView(this).apply {

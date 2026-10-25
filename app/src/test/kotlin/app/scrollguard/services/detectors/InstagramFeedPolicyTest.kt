@@ -47,8 +47,9 @@ class InstagramFeedPolicyTest {
         assertEquals(InstagramScreen.REELS, screen(node("clips_video_container"), node("direct_thread")))
     }
     @Test fun realProfileWithTwoContentMarkersIsAllowed() {
-        assertEquals(InstagramScreen.PROFILE, screen(node("row_profile_header_imageview_frame_layout"),
-            node("profile_user_info_compose_view")))
+        assertEquals(InstagramScreen.PROFILE, screen(node("root", viewport),
+            node("row_profile_header_imageview_frame_layout", MediaBounds(0, 100, 720, 300), parent = 0),
+            node("profile_user_info_compose_view", MediaBounds(0, 300, 720, 600), parent = 0)))
     }
     @Test fun offscreenProfileCannotUnlockUnknownFeed() {
         val offscreen = MediaBounds(0, 2000, 720, 2500)
@@ -377,8 +378,8 @@ class InstagramFeedPolicyTest {
     @Test fun socialModeStillLocksReelsEmbeddedInHome() {
         for (id in listOf("clips_video_container", "clips_media_component", "clips_single_media_component")) {
             val tree = AccessibilityTreeSnapshot(listOf(
-                node("feed_recycler_view", viewport), node(id, MediaBounds(0, 500, 720, 850))), false)
-            assertEquals(InstagramScreen.REELS,
+                node("feed_recycler_view", viewport), node(id, MediaBounds(0, 500, 720, 850), parent = 0)), false)
+            assertEquals(InstagramScreen.HOME_REEL,
                 InstagramFeedPolicy.evaluate(InstagramProtectionMode.SOCIAL, tree, viewport))
         }
     }

@@ -18,5 +18,5 @@ internal object InstagramMediaSemantics {
     }
     fun isVideoView(className: String): Boolean = className == "android.widget.VideoView"
     fun isUnlabelledSurfaceClass(className: String): Boolean = className == "android.view.View" ||
-        className == "android.view.TextureView"
+        className == "android.view.TextureView" || className == "android.view.SurfaceView"
 }
