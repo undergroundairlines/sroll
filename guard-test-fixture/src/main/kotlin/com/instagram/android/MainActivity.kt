@@ -4,27 +4,83 @@ package com.instagram.android
 import android.app.Activity
 import android.content.Intent
 import android.os.Bundle
+import android.os.Handler
+import android.os.Looper
 import android.view.View
+import android.view.ViewGroup
+import android.view.MotionEvent
+import android.view.TextureView
+import android.view.accessibility.AccessibilityEvent
 import android.widget.Button
+import android.widget.EditText
+import android.widget.FrameLayout
+import android.widget.ImageButton
+import android.widget.ImageView
 import android.widget.LinearLayout
 import android.widget.ScrollView
 import android.widget.TextView
 
-/** Emulator-only UI. Deliberately has no clips/video identifiers on Home. */
+/** Emulator-only structural scenarios. These resource IDs do not assert Instagram compatibility. */
 class MainActivity : Activity() {
+    private val handler = Handler(Looper.getMainLooper())
+    private var currentScreen = "home"
+    private var photosSent = 0
+    private var renderedRoot: View? = null
+    private val transientNodeIds = mutableListOf<Pair<View, Int>>()
+    private val transientChildren = mutableListOf<Pair<View, ViewGroup.LayoutParams>>()
+    private var rootClickableBeforeGap = false
+    private var gapTouches = 0
+
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
-        render(intent.getStringExtra("screen") ?: "home")
+        render(savedInstanceState?.getString("screen") ?: intent.getStringExtra("screen") ?: "home")
     }
 
     override fun onNewIntent(intent: Intent) {
         super.onNewIntent(intent)
+        handler.removeCallbacksAndMessages(null)
         setIntent(intent)
-        render(intent.getStringExtra("screen") ?: "home")
+        when (val screen = intent.getStringExtra("screen") ?: "home") {
+            "continuity_unknown" -> hideCurrentFeedStructure(empty = false)
+            "continuity_empty" -> hideCurrentFeedStructure(empty = true)
+            "continuity_restore" -> restoreCurrentFeedStructure()
+            else -> render(screen)
+        }
     }
 
-    private fun render(screen: String) {
-        val root = LinearLayout(this).apply {
+    override fun onDestroy() {
+        handler.removeCallbacksAndMessages(null)
+        super.onDestroy()
+    }
+
+    override fun onSaveInstanceState(outState: Bundle) {
+        outState.putString("screen", currentScreen)
+        super.onSaveInstanceState(outState)
+    }
+
+    @Deprecated("Synthetic fixture uses an explicit screen stack")
+    override fun onBackPressed() {
+        when (currentScreen) {
+            "photo_gallery", "photo_camera", "photo_editor" -> render("conversation_photos")
+            "conversation", "conversation_photos", "conversation_scrolling", "conversation_retained_home", "shared_reel" -> render(if (currentScreen == "shared_reel") "conversation" else "messages")
+            "messages", "profile", "story", "story_retained_home" -> render("home")
+            else -> super.onBackPressed()
+        }
+    }
+
+    private fun render(screen: String, suppressChildEvents: Boolean = false) {
+        transientNodeIds.clear()
+        transientChildren.clear()
+        gapTouches = 0
+        currentScreen = screen
+        val root = object : LinearLayout(this) {
+            override fun requestSendAccessibilityEvent(child: View, event: AccessibilityEvent): Boolean =
+                !suppressChildEvents && super.requestSendAccessibilityEvent(child, event)
+
+            override fun sendAccessibilityEventUnchecked(event: AccessibilityEvent) {
+                if (!suppressChildEvents) super.sendAccessibilityEventUnchecked(event)
+            }
+        }.apply {
             orientation = LinearLayout.VERTICAL
             setPadding(0, 80, 0, 80)
         }
@@ -40,46 +96,221 @@ class MainActivity : Activity() {
             textSize = 24f
             setPadding(20, 20, 20, 20)
         }
+        fun action(textValue: String, parent: LinearLayout = body, viewId: Int = 0, action: () -> Unit) {
+            parent.addView(Button(this).apply {
+                if (viewId != 0) id = viewId
+                isAllCaps = false
+                text = textValue
+                setOnClickListener { action() }
+            })
+        }
         when (screen) {
             "messages" -> {
-                body.id = R.id.direct_thread
+                body.id = R.id.direct_inbox
                 body.addView(label("Fixture messages"))
+                action("Open conversation") { render("conversation") }
+                action("Open contact profile") { render("profile") }
+                // Delay until the click event is over, then suppress descendant events.
+                // The platform may still issue its own events; this is a watchdog exercise.
+                action("Silent return Home") {
+                    handler.postDelayed({ render("home", suppressChildEvents = true) }, 700L)
+                }
+            }
+            "conversation", "conversation_immediate", "conversation_scrolling", "conversation_photos", "conversation_retained_home" -> {
+                body.addView(label("Fixture conversation"))
+                val history = LinearLayout(this).apply {
+                    if (screen != "conversation_scrolling") id = R.id.message_list
+                    orientation = LinearLayout.VERTICAL
+                    importantForAccessibility = View.IMPORTANT_FOR_ACCESSIBILITY_YES
+                }
+                history.addView(label("Synthetic message history"))
+                action("Open shared Reel", history,
+                    if (screen == "conversation_immediate") R.id.fixture_shared_reel_no_source else R.id.direct_shared_reel) {
+                    // Keep the clicked structural source observable until TYPE_VIEW_CLICKED
+                    // is delivered. A real app can destroy it first; production must fail
+                    // closed then. This delay tests only the supported, observable case.
+                    if (screen == "conversation_immediate") render("shared_reel")
+                    else handler.postDelayed({ render("shared_reel") }, 250L)
+                }
+                action("Open contact profile", history) { render("profile") }
+                if (screen == "conversation_scrolling") {
+                    val probe = TransientTreeProbe(this).apply { id = R.id.fixture_tree_probe }
+                    // A virtual child disappears only within verified message history;
+                    // composer/navigation outside this subtree remain complete.
+                    history.addView(probe, 0, LinearLayout.LayoutParams(-1, 2))
+                    // Inline preview can fill the small message viewport without being a
+                    // standalone Reel viewer. It must not lock an otherwise confirmed chat.
+                    history.addView(label("Shared Reel preview", R.id.clips_video_container).apply {
+                        minHeight = 170
+                    }, 1)
+                    repeat(30) { history.addView(label("Synthetic message $it")) }
+                    val scroll = ScrollView(this).apply { id = R.id.message_list; addView(history) }
+                    body.addView(scroll, LinearLayout.LayoutParams(-1, 0, 1f))
+                    val scrollStatus = label("Message scroll: 0; incomplete changes: 0", R.id.fixture_message_scroll_status)
+                    scrollStatus.textSize = 12f
+                    scrollStatus.setPadding(0, 0, 0, 0)
+                    body.addView(scrollStatus)
+                    scroll.setOnScrollChangeListener { _, _, y, _, _ ->
+                        probe.unavailableDuringScroll()
+                        scrollStatus.text = "Message scroll: $y; incomplete changes: ${probe.changeCount}"
+                    }
+                } else body.addView(history, LinearLayout.LayoutParams(-1, 0, 1f))
+                val sent = label("Sent: 0", R.id.fixture_sent_status)
+                body.addView(sent)
+                if (screen == "conversation_photos") {
+                    body.addView(label("Photos sent: $photosSent", R.id.fixture_photo_sent).apply {
+                        textSize = 12f
+                        setPadding(0, 0, 0, 0)
+                    })
+                    val attachments = LinearLayout(this)
+                    body.addView(attachments)
+                    action("Choose photo", attachments, R.id.fixture_choose_photo) { render("photo_gallery") }
+                    action("Take photo", attachments, R.id.fixture_take_photo) { render("photo_camera") }
+                }
+                val composer = EditText(this).apply {
+                    id = R.id.row_thread_composer_edittext
+                    hint = "Message"
+                    setSingleLine()
+                }
+                body.addView(composer)
+                var sendCount = 0
                 body.addView(Button(this).apply {
-                    isAllCaps = false
-                    text = "Open contact profile"
-                    setOnClickListener { render("profile") }
+                    id = R.id.row_thread_composer_button_send
+                    text = "Send"
+                    setOnClickListener {
+                        if (composer.text.isNotEmpty()) {
+                            sendCount++
+                            composer.text.clear()
+                            sent.text = "Sent: $sendCount"
+                        }
+                    }
                 })
+            }
+            "photo_gallery", "photo_camera", "photo_editor" -> {
+                // Deliberately no chat/feed resource identifiers. Native attachment flows
+                // can replace the composer/history; account data is unnecessary to test that.
+                body.addView(label("Fixture $screen"))
+                if (screen == "photo_gallery") {
+                    val scroll = ScrollView(this)
+                    val photos = LinearLayout(this).apply { orientation = LinearLayout.VERTICAL }
+                    repeat(30) { index ->
+                        action("Synthetic photo $index", photos) { render("photo_editor") }
+                    }
+                    scroll.addView(photos)
+                    body.addView(scroll, LinearLayout.LayoutParams(-1, 0, 1f))
+                } else if (screen == "photo_camera") {
+                    action("Capture photo", viewId = R.id.fixture_capture_photo) { render("photo_editor") }
+                } else {
+                    val caption = EditText(this).apply { hint = "Caption"; id = R.id.fixture_photo_caption }
+                    body.addView(caption)
+                    action("Send photo", viewId = R.id.fixture_send_photo) {
+                        photosSent++
+                        render("conversation_photos")
+                    }
+                }
             }
             "profile" -> {
                 body.addView(label("Fixture profile", R.id.row_profile_header_imageview_frame_layout))
                 body.addView(label("Profile details", R.id.profile_user_info_compose_view))
+                action("Open profile Reel") { render("reels") }
             }
             "story" -> {
                 body.id = R.id.reel_viewer
                 body.addView(label("Fixture story"))
+                var story = 1
+                val progress = label("Story: 1", R.id.fixture_story_progress)
+                body.addView(progress)
+                action("Next Story") { progress.text = "Story: ${++story}" }
+            }
+            "story_retained_home" -> {
+                val pages = FrameLayout(this)
+                val retainedHome = LinearLayout(this).apply {
+                    id = R.id.feed_recycler_view
+                    orientation = LinearLayout.VERTICAL
+                    importantForAccessibility = View.IMPORTANT_FOR_ACCESSIBILITY_YES
+                    addView(label("Retained Home header", R.id.row_feed_profile_header))
+                }
+                pages.addView(retainedHome, FrameLayout.LayoutParams(-1, -1))
+                val viewer = LinearLayout(this).apply {
+                    id = R.id.reel_viewer
+                    orientation = LinearLayout.VERTICAL
+                    importantForAccessibility = View.IMPORTANT_FOR_ACCESSIBILITY_YES
+                    setBackgroundColor(android.graphics.Color.DKGRAY)
+                    addView(label("Story progress", R.id.reel_viewer_progress_bar).apply {
+                        textSize = 8f
+                        setPadding(0, 0, 0, 0)
+                    })
+                    addView(label("Synthetic story owner", R.id.reel_viewer_title).apply {
+                        textSize = 12f
+                        setPadding(0, 0, 0, 0)
+                    })
+                    addView(label("Fixture story"))
+                }
+                var story = 1
+                val progress = label("Story: 1", R.id.fixture_story_progress)
+                viewer.addView(progress)
+                action("Next Story", viewer) { progress.text = "Story: ${++story}" }
+                action("Return Home", viewer) { render("home") }
+                pages.addView(viewer, FrameLayout.LayoutParams(-1, -1))
+                body.addView(pages, LinearLayout.LayoutParams(-1, -1))
+            }
+            "reels", "shared_reel" -> {
+                body.id = R.id.clips_viewer_view_pager
+                body.addView(label(if (screen == "shared_reel") "Fixture shared Reel" else "Fixture Reels"))
+                addFeed(body, label("Scroll: 0; clicks: 0", R.id.fixture_status),
+                    media = true, ordinaryHome = false)
             }
             else -> {
-                var clicks = 0
+                if (screen == "home" || screen == "home_reel" || screen == "home_photo" || screen.startsWith("home_video") || screen == "home_native_video") {
+                    body.addView(ImageButton(this).apply {
+                        contentDescription = "Friend's story"
+                        setImageResource(android.R.drawable.ic_menu_myplaces)
+                        setOnClickListener { render("story") }
+                    }, LinearLayout.LayoutParams(64, 64))
+                }
                 val status = label("Scroll: 0; clicks: 0", R.id.fixture_status)
-                body.addView(status)
-                val scroll = ScrollView(this)
-                val posts = LinearLayout(this).apply { orientation = LinearLayout.VERTICAL }
-                if (screen == "home") posts.addView(label("Feed header", R.id.row_feed_profile_header))
-                repeat(50) { index ->
-                    posts.addView(label("Post $index").apply {
-                        setPadding(20, 100, 20, 100)
-                        setOnClickListener {
-                            clicks++
-                            status.text = "Scroll: ${scroll.scrollY}; clicks: $clicks"
-                        }
+                if (screen == "explore") body.id = R.id.explore_grid
+                if (screen == "cached_profile") body.addView(label("Cached header", R.id.row_profile_header_imageview_frame_layout))
+                if (screen == "truncated") {
+                    repeat(1_300) {
+                        body.addView(label("Synthetic node $it").apply {
+                            importantForAccessibility = View.IMPORTANT_FOR_ACCESSIBILITY_YES
+                        }, LinearLayout.LayoutParams(-1, 1))
+                    }
+                }
+                if (screen == "stale_profile") {
+                    // Cached but hidden safety nodes must never unlock a live feed.
+                    body.addView(label("Cached header", R.id.row_profile_header_imageview_frame_layout).apply {
+                        visibility = View.INVISIBLE
+                    })
+                    body.addView(label("Cached profile", R.id.profile_user_info_compose_view).apply {
+                        visibility = View.INVISIBLE
                     })
                 }
-                scroll.addView(posts)
-                scroll.setOnScrollChangeListener { _, _, y, _, _ ->
-                    status.text = "Scroll: $y; clicks: $clicks"
-                }
-                body.addView(scroll, LinearLayout.LayoutParams(-1, 0, 1f))
+                addFeed(body, status, media = screen == "home_reel",
+                    ordinaryHome = screen == "home" || screen == "home_reel" || screen == "home_photo" || screen.startsWith("home_video") || screen == "home_native_video",
+                    nativeVideo = screen == "home_native_video" || screen == "home_video_noop",
+                    describedVideo = screen == "home_video_role",
+                    refuseScroll = screen == "home_video_noop", photo = screen == "home_photo")
             }
+        }
+        if (screen == "conversation_retained_home") {
+            // Real native sibling drawing order, with accessibility-visible Home retained
+            // underneath a current conversation. No accessibility class/order overrides.
+            root.removeView(body)
+            val pages = FrameLayout(this)
+            val retainedHome = LinearLayout(this).apply {
+                id = R.id.feed_recycler_view
+                orientation = LinearLayout.VERTICAL
+                importantForAccessibility = View.IMPORTANT_FOR_ACCESSIBILITY_YES
+                addView(label("Retained Home header", R.id.row_feed_profile_header))
+                addView(label("Retained Home video", R.id.clips_video_container),
+                    LinearLayout.LayoutParams(-1, -1))
+            }
+            pages.addView(retainedHome, FrameLayout.LayoutParams(-1, -1))
+            body.setBackgroundColor(android.graphics.Color.WHITE)
+            pages.addView(body, FrameLayout.LayoutParams(-1, -1))
+            root.addView(pages, LinearLayout.LayoutParams(-1, 0, 1f))
         }
         val nav = LinearLayout(this)
         fun tab(textValue: String, viewId: Int, destination: String) {
@@ -87,14 +318,151 @@ class MainActivity : Activity() {
                 id = viewId
                 text = textValue
                 contentDescription = textValue
-                isSelected = screen == destination
-                setOnClickListener { render(destination) }
+                isSelected = screen == destination || (screen == "selected_profile" && destination == "profile")
+                // ACTION_CLICK still returns true for this no-op; protection must remain.
+                setOnClickListener { if (screen != "navigation_noop") render(destination) }
             }, LinearLayout.LayoutParams(0, -2, 1f))
         }
         tab("Home", R.id.feed_tab, "home")
         tab("Messages", R.id.direct_tab, "messages")
         tab("Profile", R.id.profile_tab, "profile")
         root.addView(nav)
+        if (screen == "empty_tree") root.importantForAccessibility = View.IMPORTANT_FOR_ACCESSIBILITY_NO_HIDE_DESCENDANTS
         setContentView(root)
+        renderedRoot = root
+        if (screen == "event_storm") {
+            // Sustained callbacks must not occupy the service's main Looper ahead of layout.
+            repeat(120) { index ->
+                handler.postDelayed({
+                    if (currentScreen == screen) root.sendAccessibilityEvent(AccessibilityEvent.TYPE_WINDOW_STATE_CHANGED)
+                }, index * 35L)
+            }
+        }
+    }
+
+    /** Keep the real native feed and its touch/scroll counters alive in the same window.
+     * These emulator commands model a recomposed interface losing its accessible structure;
+     * they do not fabricate AccessibilityNodeInfo classes, resource IDs or drawing order. */
+    private fun hideCurrentFeedStructure(empty: Boolean) {
+        val root = renderedRoot ?: return
+        if (transientNodeIds.isEmpty()) {
+            fun stripIds(view: View) {
+                transientNodeIds.add(view to view.id)
+                view.id = View.NO_ID
+                if (view is ViewGroup) for (index in 0 until view.childCount) stripIds(view.getChildAt(index))
+            }
+            stripIds(root)
+        }
+        if (empty && root is ViewGroup && transientChildren.isEmpty()) {
+            // An actually empty native root, not an accessibility mock. Keep detached views
+            // so the same feed's counters survive this temporary recomposition gap.
+            for (index in 0 until root.childCount) {
+                val child = root.getChildAt(index)
+                transientChildren.add(child to child.layoutParams)
+            }
+            root.removeAllViews()
+            rootClickableBeforeGap = root.isClickable
+            root.isClickable = true
+            root.setOnTouchListener { touched, event ->
+                if (event.actionMasked == MotionEvent.ACTION_DOWN) gapTouches++
+                if (event.actionMasked == MotionEvent.ACTION_UP) touched.performClick()
+                true
+            }
+        }
+        announceCurrentTreeChange(root)
+    }
+
+    private fun restoreCurrentFeedStructure() {
+        val root = renderedRoot ?: return
+        transientNodeIds.forEach { (view, id) -> view.id = id }
+        transientNodeIds.clear()
+        if (root is ViewGroup && transientChildren.isNotEmpty()) {
+            transientChildren.forEach { (view, parameters) -> root.addView(view, parameters) }
+            transientChildren.clear()
+            root.setOnTouchListener(null)
+            root.isClickable = rootClickableBeforeGap
+        }
+        if (gapTouches > 0) root.findViewById<TextView>(R.id.fixture_status)?.let {
+            it.text = "${it.text}; empty-root touches: $gapTouches"
+        }
+        announceCurrentTreeChange(root)
+    }
+
+    @Suppress("DEPRECATION")
+    private fun announceCurrentTreeChange(root: View) {
+        val event = AccessibilityEvent.obtain(AccessibilityEvent.TYPE_WINDOW_CONTENT_CHANGED)
+        event.contentChangeTypes = AccessibilityEvent.CONTENT_CHANGE_TYPE_SUBTREE
+        event.setSource(root)
+        root.sendAccessibilityEventUnchecked(event)
+    }
+
+    private fun addFeed(body: LinearLayout, status: TextView, media: Boolean, ordinaryHome: Boolean,
+        nativeVideo: Boolean = false, describedVideo: Boolean = false, refuseScroll: Boolean = false, photo: Boolean = false) {
+        var clicks = 0
+        body.addView(status)
+        val scroll = object : ScrollView(this) {
+            override fun performAccessibilityAction(action: Int, arguments: Bundle?): Boolean {
+                if (refuseScroll && action == android.view.accessibility.AccessibilityNodeInfo.ACTION_SCROLL_FORWARD) return true
+                return super.performAccessibilityAction(action, arguments)
+            }
+        }.apply { if (ordinaryHome) id = R.id.feed_recycler_view }
+        val posts = LinearLayout(this).apply { orientation = LinearLayout.VERTICAL }
+        if (ordinaryHome) posts.addView(TextView(this).apply {
+            id = R.id.row_feed_profile_header
+            text = "Feed header"
+            setPadding(20, 20, 20, 20)
+        })
+        repeat(50) { index ->
+            if (index == 0 && photo) {
+                posts.addView(ImageView(this).apply {
+                    id = R.id.fixture_generic_media
+                    setImageResource(android.R.drawable.ic_menu_gallery)
+                    importantForAccessibility = View.IMPORTANT_FOR_ACCESSIBILITY_YES
+                    isClickable = true
+                }, LinearLayout.LayoutParams(-1, 300))
+                return@repeat
+            }
+            if (index == 0 && (nativeVideo || describedVideo)) {
+                val video = if (nativeVideo) TextureView(this) else FrameLayout(this).apply { contentDescription = "Video" }
+                video.id = R.id.fixture_generic_media
+                video.setOnClickListener {
+                    clicks++
+                    status.text = "Scroll: ${scroll.scrollY}; clicks: $clicks"
+                }
+                // The production service must explicitly request this native child. No clips/reels ID.
+                if (nativeVideo) video.importantForAccessibility = View.IMPORTANT_FOR_ACCESSIBILITY_NO
+                else video.importantForAccessibility = View.IMPORTANT_FOR_ACCESSIBILITY_YES
+                posts.addView(video, LinearLayout.LayoutParams(-1, 300))
+                return@repeat
+            }
+            if (nativeVideo || describedVideo) {
+                // An explicit skip can release only after current native photo content is
+                // positively identified. Generic post text is not proof a video is gone.
+                posts.addView(ImageView(this).apply {
+                    setImageResource(android.R.drawable.ic_menu_gallery)
+                    contentDescription = "Photo"
+                    importantForAccessibility = View.IMPORTANT_FOR_ACCESSIBILITY_YES
+                    setOnClickListener {
+                        clicks++
+                        status.text = "Scroll: ${scroll.scrollY}; clicks: $clicks"
+                    }
+                }, LinearLayout.LayoutParams(-1, 300))
+                return@repeat
+            }
+            posts.addView(TextView(this).apply {
+                text = "Post $index"
+                textSize = 24f
+                if (media && index == 0) id = R.id.clips_video_container
+                setPadding(20, if (media && index == 0) 300 else 100,
+                    20, if (media && index == 0) 300 else 100)
+                setOnClickListener {
+                    clicks++
+                    status.text = "Scroll: ${scroll.scrollY}; clicks: $clicks"
+                }
+            })
+        }
+        scroll.addView(posts)
+        scroll.setOnScrollChangeListener { _, _, y, _, _ -> status.text = "Scroll: $y; clicks: $clicks" }
+        body.addView(scroll, LinearLayout.LayoutParams(-1, 0, 1f))
     }
 }

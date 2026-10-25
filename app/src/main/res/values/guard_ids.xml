@@ -1,7 +1,11 @@
 <?xml version="1.0" encoding="utf-8"?>
 <resources>
+    <item name="guard_skip_home_video" type="id" />
     <item name="guard_title" type="id" />
     <item name="guard_messages" type="id" />
     <item name="guard_profile" type="id" />
+    <item name="guard_stories" type="id" />
     <item name="guard_leave" type="id" />
+    <item name="guard_shared_back" type="id" />
+    <item name="guard_watch_shared" type="id" />
 </resources>

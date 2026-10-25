@@ -19,6 +19,7 @@ package app.scrollguard.utils
 import android.content.Context
 import androidx.datastore.core.DataStore
 import androidx.datastore.preferences.core.Preferences
+import androidx.datastore.preferences.core.MutablePreferences
 import androidx.datastore.preferences.core.booleanPreferencesKey
 import androidx.datastore.preferences.core.edit
 import androidx.datastore.preferences.core.longPreferencesKey
@@ -27,7 +28,6 @@ import androidx.datastore.preferences.preferencesDataStore
 import app.scrollguard.models.TrackedPackage
 import app.scrollguard.models.InstagramProtectionMode
 import kotlinx.coroutines.flow.Flow
-import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.flow.map
 import timber.log.Timber
 
@@ -68,15 +68,17 @@ class UserPreferencesProvider(private val context: Context) {
     suspend fun requestInstagramProtectionMode(mode: InstagramProtectionMode, nowMillis: Long) {
         context.dataStore.edit { preferences ->
             val current = InstagramProtectionMode.fromStored(preferences[instagramModeKey])
-            if (current == InstagramProtectionMode.APP_LOCK && mode == InstagramProtectionMode.FEED_LOCK &&
+            if (mode.strength < current.strength &&
                 preferences[strictModeEnabledKey] == true) {
                 if (preferences[strictModePendingTargetKey] == null) {
-                    preferences[strictModePendingTargetKey] = StrictModePolicy.INSTAGRAM_FEED_TARGET
+                    preferences[strictModePendingTargetKey] = if (mode == InstagramProtectionMode.SOCIAL)
+                        StrictModePolicy.INSTAGRAM_SOCIAL_TARGET else StrictModePolicy.INSTAGRAM_FEED_TARGET
                     preferences[strictModeUnlockAtKey] = StrictModePolicy.unlockAt(nowMillis)
                 }
             } else {
                 preferences[instagramModeKey] = mode.name
-                if (preferences[strictModePendingTargetKey] == StrictModePolicy.INSTAGRAM_FEED_TARGET) {
+                if (preferences[strictModePendingTargetKey] in setOf(StrictModePolicy.INSTAGRAM_FEED_TARGET,
+                        StrictModePolicy.INSTAGRAM_SOCIAL_TARGET)) {
                     preferences.remove(strictModePendingTargetKey)
                     preferences.remove(strictModeUnlockAtKey)
                 }
@@ -104,10 +106,13 @@ class UserPreferencesProvider(private val context: Context) {
      * @param packages List of package names to enable for blocking
      */
     suspend fun setTrackedPackages(packages: List<String>) {
-        val packagesString = packages.joinToString(",")
-        Timber.d("Setting tracked packages: $packagesString")
         context.dataStore.edit { preferences ->
-            preferences[userPreferencesKey] = packagesString
+            preferences.applyTrackedState(TrackedPackagePolicy.setPackages(
+                state = preferences.trackedState(),
+                requestedPackages = packages,
+                strictModeEnabled = preferences[strictModeEnabledKey] == true,
+                nowMillis = System.currentTimeMillis(),
+            ))
         }
     }
 
@@ -132,15 +137,33 @@ class UserPreferencesProvider(private val context: Context) {
      */
     suspend fun togglePackage(packageName: String, enabled: Boolean) {
         Timber.d("Toggling package: $packageName, enabled: $enabled")
-        val currentPackages = getTrackedPackages().first().toMutableList()
-
-        if (enabled && !currentPackages.contains(packageName)) {
-            currentPackages.add(packageName)
-        } else if (!enabled) {
-            currentPackages.remove(packageName)
+        context.dataStore.edit { preferences ->
+            preferences.applyTrackedState(TrackedPackagePolicy.setEnabled(
+                state = preferences.trackedState(),
+                packageName = packageName,
+                enabled = enabled,
+                strictModeEnabled = preferences[strictModeEnabledKey] == true,
+                nowMillis = System.currentTimeMillis(),
+            ))
         }
+    }
 
-        setTrackedPackages(currentPackages)
+    private fun Preferences.trackedState() = TrackedPackageState(
+        packages = this[userPreferencesKey]?.split(",")?.filter { it.isNotBlank() }
+            ?: PackageConstants.DEFAULT_ENABLED_PACKAGES,
+        pendingTarget = this[strictModePendingTargetKey],
+        unlockAtMillis = this[strictModeUnlockAtKey] ?: 0L,
+    )
+
+    private fun MutablePreferences.applyTrackedState(state: TrackedPackageState) {
+        this[userPreferencesKey] = state.packages.joinToString(",")
+        if (state.pendingTarget == null) {
+            remove(strictModePendingTargetKey)
+            remove(strictModeUnlockAtKey)
+        } else {
+            this[strictModePendingTargetKey] = state.pendingTarget
+            this[strictModeUnlockAtKey] = state.unlockAtMillis
+        }
     }
 
     fun getStrictModeSettings(): Flow<StrictModeSettings> {
@@ -165,6 +188,7 @@ class UserPreferencesProvider(private val context: Context) {
     /** Starts one persistent 30-minute request to disable a blocker or Strict Mode itself. */
     suspend fun requestStrictModeUnlock(target: String, nowMillis: Long) {
         context.dataStore.edit { preferences ->
+            if (preferences[strictModeEnabledKey] != true) return@edit
             if (preferences[strictModePendingTargetKey] == null) {
                 preferences[strictModePendingTargetKey] = target
                 preferences[strictModeUnlockAtKey] = StrictModePolicy.unlockAt(nowMillis)
@@ -190,6 +214,8 @@ class UserPreferencesProvider(private val context: Context) {
                     preferences[strictModeEnabledKey] = false
                 } else if (target == StrictModePolicy.INSTAGRAM_FEED_TARGET) {
                     preferences[instagramModeKey] = InstagramProtectionMode.FEED_LOCK.name
+                } else if (target == StrictModePolicy.INSTAGRAM_SOCIAL_TARGET) {
+                    preferences[instagramModeKey] = InstagramProtectionMode.SOCIAL.name
                 } else {
                     val packages = preferences[userPreferencesKey]
                         ?.split(",")

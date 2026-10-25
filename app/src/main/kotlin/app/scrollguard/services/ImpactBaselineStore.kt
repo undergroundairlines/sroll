@@ -14,6 +14,14 @@ import org.json.JSONObject
 class ImpactBaselineStore(context: Context) {
     private val preferences = context.getSharedPreferences(PREFERENCES_NAME, Context.MODE_PRIVATE)
 
+    /** Updates never replace a chosen start date with a guessed weekday or installation date. */
+    fun startedAt(defaultInstallTimeMillis: Long): Long =
+        preferences.getLong(KEY_STARTED_AT, defaultInstallTimeMillis)
+
+    fun setStartedAt(startedAtMillis: Long) {
+        preferences.edit().putLong(KEY_STARTED_AT, startedAtMillis).apply()
+    }
+
     fun load(installTimeMillis: Long): Map<String, Long>? {
         if (preferences.getLong(KEY_INSTALL_TIME, -1L) != installTimeMillis) return null
         val encoded = preferences.getString(KEY_DURATIONS, null) ?: return null
@@ -29,7 +37,9 @@ class ImpactBaselineStore(context: Context) {
         }.getOrNull()
     }
 
-    fun save(installTimeMillis: Long, durations: Map<String, Long>) {
+    fun historyComplete(): Boolean = preferences.getBoolean(KEY_HISTORY_COMPLETE, false)
+
+    fun save(installTimeMillis: Long, durations: Map<String, Long>, historyComplete: Boolean = true) {
         val json = JSONObject()
         durations.forEach { (packageName, durationMillis) ->
             json.put(packageName, durationMillis)
@@ -37,6 +47,7 @@ class ImpactBaselineStore(context: Context) {
         preferences.edit()
             .putLong(KEY_INSTALL_TIME, installTimeMillis)
             .putString(KEY_DURATIONS, json.toString())
+            .putBoolean(KEY_HISTORY_COMPLETE, historyComplete)
             .apply()
     }
 
@@ -44,5 +55,7 @@ class ImpactBaselineStore(context: Context) {
         const val PREFERENCES_NAME = "impact_baseline"
         const val KEY_INSTALL_TIME = "install_time"
         const val KEY_DURATIONS = "durations"
+        const val KEY_STARTED_AT = "started_at"
+        const val KEY_HISTORY_COMPLETE = "history_complete"
     }
 }

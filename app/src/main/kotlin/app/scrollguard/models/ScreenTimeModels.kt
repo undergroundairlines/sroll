@@ -38,6 +38,8 @@ data class ScreenTimeImpact(
     val changePercentage: Int?,
     val timeSavedMillis: Long,
     val apps: List<AppImpact>,
+    val comparisonWindowMillis: Long = baselineDays * 24L * 60L * 60L * 1000L,
+    val historyComplete: Boolean = true,
 )
 
 data class ScreenTimeReport(
@@ -52,4 +54,5 @@ data class ScreenTimeReport(
     val pickups: Int,
     val trackingSinceMillis: Long,
     val impact: ScreenTimeImpact? = null,
+    val historyComplete: Boolean = true,
 )

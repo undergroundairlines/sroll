@@ -1,9 +1,33 @@
 <resources>
+    <item name="fixture_generic_media" type="id" />
+    <item name="fixture_choose_photo" type="id" />
+    <item name="fixture_take_photo" type="id" />
+    <item name="fixture_capture_photo" type="id" />
+    <item name="fixture_send_photo" type="id" />
+    <item name="fixture_photo_caption" type="id" />
+    <item name="fixture_photo_sent" type="id" />
     <item name="feed_tab" type="id" />
     <item name="direct_tab" type="id" />
     <item name="profile_tab" type="id" />
     <item name="row_feed_profile_header" type="id" />
+    <item name="feed_recycler_view" type="id" />
     <item name="direct_thread" type="id" />
+    <item name="direct_inbox" type="id" />
+    <item name="message_list" type="id" />
+    <item name="direct_shared_reel" type="id" />
+    <item name="fixture_shared_reel_no_source" type="id" />
+    <item name="fixture_tree_probe" type="id" />
+    <item name="fixture_message_scroll_status" type="id" />
+    <item name="reel_viewer_progress_bar" type="id" />
+    <item name="reel_viewer_title" type="id" />
+    <item name="fixture_story_progress" type="id" />
+    <item name="row_thread_composer_edittext" type="id" />
+    <item name="row_thread_composer_button_send" type="id" />
+    <item name="fixture_sent_status" type="id" />
+    <item name="fixture_screen" type="id" />
+    <item name="clips_viewer_view_pager" type="id" />
+    <item name="clips_video_container" type="id" />
+    <item name="explore_grid" type="id" />
     <item name="row_profile_header_imageview_frame_layout" type="id" />
     <item name="profile_user_info_compose_view" type="id" />
     <item name="reel_viewer" type="id" />

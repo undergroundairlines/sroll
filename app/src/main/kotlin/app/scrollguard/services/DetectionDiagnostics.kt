@@ -16,10 +16,8 @@ import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.asStateFlow
 import kotlinx.coroutines.flow.update
 
-/** In-memory, privacy-safe detector output. It never stores captions or account names. */
+/** Latest privacy-safe, in-memory detector sample per app. Outcomes belong only to that sample. */
 object DetectionDiagnostics {
-    private const val SAMPLE_WINDOW_MILLIS = 60_000L
-
     private val _records = MutableStateFlow<Map<String, DetectionDiagnostic>>(emptyMap())
     val records = _records.asStateFlow()
 
@@ -39,30 +37,9 @@ object DetectionDiagnostics {
                 DetectionActionStatus.BELOW_THRESHOLD
             },
         )
-        _records.update { current ->
-            val previous = current[result.packageName]
-            if (
-                previous == null ||
-                result.action == BlockAction.LOCK_FEED ||
-                now - previous.timestampMillis > SAMPLE_WINDOW_MILLIS ||
-                record.score >= previous.score ||
-                (result.shouldBlock && result.action != previous.action)
-            ) {
-                val priorOutcome = previous?.actionStatus
-                val preserveOutcome = result.action != BlockAction.LOCK_FEED && previous != null &&
-                    now - previous.timestampMillis <= SAMPLE_WINDOW_MILLIS &&
-                    previous.action == result.action &&
-                    priorOutcome != null && isCompletedOutcome(priorOutcome)
-                current + (result.packageName to if (preserveOutcome) {
-                    record.copy(actionStatus = priorOutcome ?: record.actionStatus,
-                        videoCoverStatus = previous?.videoCoverStatus ?: VideoCoverStatus.NONE)
-                } else {
-                    record
-                })
-            } else {
-                current
-            }
-        }
+        // A lower score or repeated screen is still a newer observation. Never carry
+        // attachment/action success from a previous screen into the current sample.
+        _records.update { current -> current + (result.packageName to record) }
     }
 
     fun reportActionStatus(
@@ -72,10 +49,7 @@ object DetectionDiagnostics {
     ) {
         _records.update { current ->
             val previous = current[packageName] ?: return@update current
-            if (previous.action != action) return@update current
-            if (status == DetectionActionStatus.COOLDOWN &&
-                isCompletedOutcome(previous.actionStatus)
-            ) return@update current
+            if (previous.action != action || previous.score < previous.threshold) return@update current
             current + (packageName to previous.copy(actionStatus = status))
         }
     }
@@ -87,14 +61,8 @@ object DetectionDiagnostics {
     fun reportVideoCoverStatus(packageName: String, status: VideoCoverStatus) {
         _records.update { current ->
             val previous = current[packageName] ?: return@update current
-            if (previous.action != BlockAction.SKIP_REEL) return@update current
+            if (previous.action != BlockAction.SKIP_REEL || previous.score < previous.threshold) return@update current
             current + (packageName to previous.copy(videoCoverStatus = status))
         }
     }
-
-    private fun isCompletedOutcome(status: DetectionActionStatus): Boolean =
-        status == DetectionActionStatus.PERFORMED ||
-            status == DetectionActionStatus.TOUCH_BLOCKED ||
-            status == DetectionActionStatus.FEED_SCROLL_SENT ||
-            status == DetectionActionStatus.FAILED
 }
