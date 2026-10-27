@@ -2,6 +2,7 @@
 from pathlib import Path
 from urllib.request import urlopen
 import subprocess, hashlib, json
+from zipfile import ZipFile, ZIP_STORED
 
 lab=Path('lab');lab.mkdir(exist_ok=True)
 evidence=Path('evidence');evidence.mkdir(exist_ok=True)
@@ -13,13 +14,20 @@ for name,(url,digest) in files.items():
     with urlopen(url,timeout=120) as r: data=r.read()
     assert hashlib.sha256(data).hexdigest()==digest,name+' changed'
     (lab/name).write_bytes(data)
+# The available Meta-signed input lacks its density split. This is an explicit
+# BASE-ONLY experiment, not a complete distributable client or a stock baseline.
+# Use the pinned upstream's ordinary merger; never invent split resources.
+with ZipFile(lab/'base-only.apkm','w',compression=ZIP_STORED) as archive:
+    archive.write(lab/'stock.apk','base.apk')
+subprocess.run(['java','-Xmx6g','-cp',str(lab/'morphe.jar'),'hushgram/scripts/MergeSplits.java',str(lab/'base-only.apkm'),str(lab/'base-only-merged.apk')],check=True)
+(evidence/'scope.json').write_text(json.dumps({'baseOnly':True,'missing':'vendor density split','merge':'unmodified pinned upstream MergeSplits.java and Morphe merger','notEstablished':['complete-client installation','signed-in Home/messages/Stories','physical swipe enforcement','Nothing OS compatibility']}))
 catalog=json.loads(Path('hushgram/patches-list.json').read_text())
 patches=catalog['patches']
 names=[p['name'] for p in patches if p['name'] not in ['Install next to Instagram','Change version code']]
 assert len(names)==115, 'Released patch catalogue changed'
 args=['java','-Xmx6g','-jar',str(lab/'morphe.jar'),'patch','--unsigned','--exclusive','-p',str(lab/'patches.mpp'),'-o',str(lab/'patched.apk'),'-t',str(lab/'temp'),'-r',str(evidence/'patch-result.json')]
 for name in names:args+=['-e',name]
-args+=[str(lab/'stock.apk')]
+args+=[str(lab/'base-only-merged.apk')]
 with (evidence/'patch.log').open('w') as log:
     completed=subprocess.run(args,stdout=log,stderr=subprocess.STDOUT)
 if completed.returncode:
