@@ -2,12 +2,14 @@ name: HushGram isolated Android evaluation
 on:
   push:
     branches: [codex/hushgram-emulator-lab]
+    paths: ['.github/workflows/hushgram-lab.yml', 'scripts/hushgram-lab/**']
   workflow_dispatch:
 permissions:
   contents: read
   packages: read
 jobs:
   upstream-tests:
+    if: ${{ !contains(github.event.head_commit.message, '[android-only]') }}
     runs-on: ubuntu-latest
     timeout-minutes: 40
     steps:
@@ -78,7 +80,7 @@ jobs:
       - uses: actions/setup-java@v4
         with:
           distribution: temurin
-          java-version: 17
+          java-version: 21
       - name: Obtain pinned stock APK through its public guest download
         run: |
           mkdir -p evidence lab
@@ -123,3 +125,4 @@ jobs:
           name: hushgram-offline-emulator-evidence
           path: evidence/
           retention-days: 14
+

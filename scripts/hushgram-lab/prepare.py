@@ -21,9 +21,13 @@ args=['java','-Xmx6g','-jar',str(lab/'morphe.jar'),'patch','--unsigned','--exclu
 for name in names:args+=['-e',name]
 args+=[str(lab/'stock.apk')]
 with (evidence/'patch.log').open('w') as log:
-    subprocess.run(args,stdout=log,stderr=subprocess.STDOUT,check=True)
+    completed=subprocess.run(args,stdout=log,stderr=subprocess.STDOUT)
+if completed.returncode:
+    print((evidence/'patch.log').read_text()[-10000:])
+    raise SystemExit(completed.returncode)
 result=json.loads((evidence/'patch-result.json').read_text())
 assert result['success'] and not result['failedPatches']
 assert set(result['appliedPatches'])==set(names)
 print('Applied',len(names),'released patches; signing is a separate Android SDK step.')
+
 
