@@ -25,7 +25,7 @@ jobs:
         env:
           GITHUB_TOKEN: ${{ github.token }}
           GITHUB_ACTOR: ${{ github.actor }}
-        run: ./gradlew :extensions:instagram:testDebugUnitTest :patches:test --stacktrace
+        run: bash ./gradlew :extensions:instagram:testDebugUnitTest :patches:test --stacktrace
       - name: Collect actual test counts including skips
         if: always()
         run: |
