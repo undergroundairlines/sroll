@@ -1,0 +1,69 @@
+name: Inspect original signing-key recovery sources
+
+on:
+  push:
+    branches: [codex/recover-original-signing-key]
+  workflow_dispatch:
+
+permissions:
+  contents: read
+  actions: read
+
+jobs:
+  inventory:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - name: Inspect repository cache and artifact metadata
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          set -euo pipefail
+          gh api --paginate --slurp "repos/$GITHUB_REPOSITORY/actions/caches?per_page=100" > "$RUNNER_TEMP/cache-inventory.json"
+          gh api --paginate --slurp "repos/$GITHUB_REPOSITORY/actions/artifacts?per_page=100" > "$RUNNER_TEMP/artifact-inventory.json"
+          python3 - <<'PY' | tee "$RUNNER_TEMP/key-recovery-inventory.txt"
+          import json, os
+          from pathlib import Path
+          temp = Path(os.environ["RUNNER_TEMP"])
+          caches = [c for page in json.loads((temp / "cache-inventory.json").read_text()) for c in page.get("actions_caches", [])]
+          artifacts = [a for page in json.loads((temp / "artifact-inventory.json").read_text()) for a in page.get("artifacts", [])]
+          print("Repository:", os.environ["GITHUB_REPOSITORY"])
+          print("All cache entries:", len(caches))
+          for c in caches:
+              print("CACHE", json.dumps({k: c.get(k) for k in ("id", "key", "ref", "version", "created_at", "last_accessed_at", "size_in_bytes")}, sort_keys=True))
+          print("All artifact entries:", len(artifacts))
+          for a in artifacts:
+              print("ARTIFACT", json.dumps({k: a.get(k) for k in ("id", "name", "expired", "created_at", "expires_at", "size_in_bytes")}, sort_keys=True))
+          print("Only metadata was inspected. No signing key or secret value is included.")
+          PY
+
+      - name: Try restoring the original key without generating or replacing any key
+        id: restore
+        uses: actions/cache/restore@v4
+        with:
+          path: ~/.android/debug.keystore
+          key: scroll-guard-debug-signing-v1
+
+      - name: Verify any restored key against the installed app
+        run: |
+          set -euo pipefail
+          if [ ! -f "$HOME/.android/debug.keystore" ]; then
+            echo "RECOVERY_RESULT: Original signing key was not restored; no key generated." | tee -a "$RUNNER_TEMP/key-recovery-inventory.txt"
+            exit 0
+          fi
+          certificate=$(keytool -exportcert -keystore "$HOME/.android/debug.keystore" -storepass android -alias androiddebugkey | sha256sum | cut -d ' ' -f 1)
+          echo "Restored public certificate SHA-256: $certificate" | tee -a "$RUNNER_TEMP/key-recovery-inventory.txt"
+          if [ "$certificate" = "5f9a5eccde1fc15e4c60cc8ce3de4eab317fac4770c7795cebc49200840ad0cf" ]; then
+            echo "RECOVERY_RESULT: Matching original signing key found in cache; private material remains only on the runner." | tee -a "$RUNNER_TEMP/key-recovery-inventory.txt"
+          else
+            echo "RECOVERY_RESULT: Cached key does not match the installed app; it cannot sign a compatible update." | tee -a "$RUNNER_TEMP/key-recovery-inventory.txt"
+          fi
+
+      - name: Save metadata-only recovery findings
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: scroll-guard-key-recovery-inventory
+          path: ${{ runner.temp }}/key-recovery-inventory.txt
+          retention-days: 14
+          if-no-files-found: warn
