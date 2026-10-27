@@ -16,7 +16,7 @@
 -->
 
 <resources>
-    <string name="app_name">Scroll Guard</string>
+    <string name="app_name">Scroll Guard Fresh</string>
     
     <!-- Service Status -->
     <string name="service_active">Service Active</string>

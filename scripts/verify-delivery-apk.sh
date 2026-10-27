@@ -4,8 +4,13 @@ set -euo pipefail
 
 apk="${1:-app/build/outputs/apk/debug/app-debug.apk}"
 stage="${2:-final}"
-expected_certificate="5f9a5eccde1fc15e4c60cc8ce3de4eab317fac4770c7795cebc49200840ad0cf"
-expected_package="app.scrollguard"
+if [[ -f scripts/signing/fresh-certificate.sha256 ]]; then
+    expected_certificate="$(tr -d '[:space:]' < scripts/signing/fresh-certificate.sha256)"
+else
+    # Initial enrolment captures the new public fingerprint before any build/emulator stage.
+    expected_certificate="${SCROLL_GUARD_EXPECTED_CERTIFICATE:?Fresh signing certificate must be pinned before building}"
+fi
+expected_package="app.scrollguard.fresh"
 expected_version_code="406"
 expected_version_name="0.4.6"
 sdk="${ANDROID_SDK_ROOT:-${ANDROID_HOME:-}}"
@@ -38,7 +43,7 @@ certificate="$signer_digests"
 if [[ "$certificate" != "$expected_certificate" || "$signer_count" != "1" ]]; then
     printf '%s\n' "$certificates"
     echo "Parsed signer certificate count: $signer_count; expected certificate SHA-256: $expected_certificate"
-    echo "::error::APK signing certificate does not match installed Scroll Guard 0.4.0. Refusing an incompatible update."
+    echo "::error::APK signing certificate does not match the pinned Scroll Guard Fresh key. Refusing delivery."
     exit 1
 fi
 

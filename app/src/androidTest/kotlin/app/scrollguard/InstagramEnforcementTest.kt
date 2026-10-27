@@ -2,6 +2,7 @@
 package app.scrollguard
 
 import android.app.UiAutomation
+import android.content.ComponentName
 import android.accessibilityservice.AccessibilityServiceInfo
 import android.os.SystemClock
 import android.view.accessibility.AccessibilityWindowInfo
@@ -13,6 +14,8 @@ import androidx.test.uiautomator.UiDevice
 import androidx.test.uiautomator.Until
 import app.scrollguard.models.InstagramProtectionMode
 import app.scrollguard.services.ProtectionRuntime
+import app.scrollguard.services.ShortFormContentBlockerService
+import app.scrollguard.utils.AccessibilityServiceManager
 import app.scrollguard.utils.StrictModePolicy
 import app.scrollguard.utils.UserPreferencesProvider
 import kotlinx.coroutines.flow.first
@@ -38,10 +41,11 @@ import java.util.concurrent.atomic.AtomicBoolean
 class InstagramEnforcementTest {
     @get:Rule val testName = TestName()
     private val instrumentation = InstrumentationRegistry.getInstrumentation()
+    private val targetPackage = instrumentation.targetContext.packageName
     private lateinit var device: UiDevice
     private val preferences by lazy { UserPreferencesProvider(instrumentation.targetContext) }
-    private val guardTitle = By.res("app.scrollguard", "guard_title")
-    private val sharedBack = By.res("app.scrollguard", "guard_shared_back")
+    private val guardTitle = By.res(targetPackage, "guard_title")
+    private val sharedBack = By.res(targetPackage, "guard_shared_back")
 
     @Before fun setup() {
         // UI Automator otherwise suppresses the very service these tests need to exercise.
@@ -64,7 +68,7 @@ class InstagramEnforcementTest {
             preferences.requestInstagramProtectionMode(InstagramProtectionMode.FEED_LOCK, System.currentTimeMillis())
             preferences.setTrackedPackages(listOf("com.instagram.android"))
         }
-        device.executeShellCommand("settings put secure enabled_accessibility_services app.scrollguard/app.scrollguard.services.ShortFormContentBlockerService")
+        device.executeShellCommand("settings put secure enabled_accessibility_services $targetPackage/app.scrollguard.services.ShortFormContentBlockerService")
         device.executeShellCommand("settings put secure accessibility_enabled 1")
         awaitCondition {
             val state = ProtectionRuntime.state.value
@@ -84,7 +88,7 @@ class InstagramEnforcementTest {
         // executeShellCommand does not expand a wildcard; copy explicit files.
         for (extension in listOf("png", "xml", "txt")) {
             val fileName = "${testName.methodName}.$extension"
-            device.executeShellCommand("cp /sdcard/Android/data/app.scrollguard/files/$fileName /sdcard/Download/scrollguard-verification/$fileName")
+            device.executeShellCommand("cp /sdcard/Android/data/$targetPackage/files/$fileName /sdcard/Download/scrollguard-verification/$fileName")
         }
         device.pressHome()
         device.setOrientationNatural()
@@ -126,7 +130,7 @@ class InstagramEnforcementTest {
             if (device.displayHeight > device.displayWidth) {
                 val x = device.displayWidth / 3
                 val y = device.displayHeight * 2 / 5
-                val overControl = device.findObjects(By.pkg("app.scrollguard").clazz("android.widget.Button"))
+                val overControl = device.findObjects(By.pkg(targetPackage).clazz("android.widget.Button"))
                     .any { it.visibleBounds.contains(x, y) }
                 if (!overControl) device.click(x, y)
             }
@@ -165,6 +169,15 @@ class InstagramEnforcementTest {
             .windows.firstOrNull { it.type == AccessibilityWindowInfo.TYPE_APPLICATION && it.isFocused }
             ?.root?.packageName?.toString()
 
+    @Test fun grantedServiceBelongsToTheFreshInstalledPackage() {
+        assertEquals("app.scrollguard.fresh", targetPackage)
+        val context = instrumentation.targetContext
+        val component = ComponentName(context, ShortFormContentBlockerService::class.java)
+        assertEquals(targetPackage, context.packageManager.getServiceInfo(component, 0).packageName)
+        assertTrue("The fresh app must recognise its own enabled accessibility service",
+            AccessibilityServiceManager.isAccessibilityServiceEnabled(context, component.flattenToString()))
+    }
+
     @Test fun swipesAndTapsCannotReachHomeEvenWithoutReelIds() {
         open("home")
         awaitLock()
@@ -186,7 +199,7 @@ class InstagramEnforcementTest {
     @Test fun messagesAndProfilesOpenButReturningHomeRelocks() {
         open("home")
         awaitLock()
-        device.findObject(By.res("app.scrollguard", "guard_messages")).click()
+        device.findObject(By.res(targetPackage, "guard_messages")).click()
         assertTrue(device.wait(Until.hasObject(By.text("Fixture messages")), 8_000L))
         assertTrue(device.wait(Until.gone(guardTitle), 8_000L))
         val contact = device.wait(Until.findObject(By.text("Open contact profile")), 8_000L)
@@ -200,7 +213,7 @@ class InstagramEnforcementTest {
     @Test fun openingConversationFromInboxStaysUsableWithKeyboard() {
         open("home")
         awaitLock()
-        device.findObject(By.res("app.scrollguard", "guard_messages")).click()
+        device.findObject(By.res(targetPackage, "guard_messages")).click()
         assertTrue(device.wait(Until.hasObject(By.text("Fixture messages")), 8_000L))
         assertUnlocked()
         device.findObject(By.text("Open conversation")).click()
@@ -297,7 +310,7 @@ class InstagramEnforcementTest {
     @Test fun acceptedNavigationClickDoesNotUncoverUnchangedScreen() {
         open("navigation_noop")
         awaitLock()
-        device.findObject(By.res("app.scrollguard", "guard_messages")).click()
+        device.findObject(By.res(targetPackage, "guard_messages")).click()
         SystemClock.sleep(800L)
         awaitLock()
         repeatFeedTouches()
@@ -396,7 +409,7 @@ class InstagramEnforcementTest {
         repeat(5) {
             if (device.hasObject(guardTitle)) {
                 val button = requireNotNull(device.wait(Until.findObject(
-                    By.res("app.scrollguard", "guard_skip_home_video")), 8_000L))
+                    By.res(targetPackage, "guard_skip_home_video")), 8_000L))
                 button.click()
                 SystemClock.sleep(1000L)
             }
@@ -409,7 +422,7 @@ class InstagramEnforcementTest {
         assertUnlocked()
         open("home_native_video")
         awaitLock()
-        device.findObject(By.res("app.scrollguard", "guard_messages")).click()
+        device.findObject(By.res(targetPackage, "guard_messages")).click()
         assertTrue(device.wait(Until.hasObject(By.text("Fixture messages")), 8_000L))
         assertUnlocked()
         device.findObject(By.text("Open conversation")).click()
@@ -424,7 +437,7 @@ class InstagramEnforcementTest {
         awaitCondition { ProtectionRuntime.state.value.instagramMode == InstagramProtectionMode.SOCIAL }
         open("home_video_noop")
         awaitLock()
-        device.findObject(By.res("app.scrollguard", "guard_skip_home_video")).click()
+        device.findObject(By.res(targetPackage, "guard_skip_home_video")).click()
         awaitCondition { ProtectionRuntime.state.value.lastAction.contains("native forward scroll accepted=true") }
         SystemClock.sleep(3500L)
         awaitLock()
@@ -628,7 +641,7 @@ class InstagramEnforcementTest {
         awaitLock()
         assertFalse("Missing positive click source must not automatically allow viewing", device.hasObject(sharedBack))
         assertEquals("Scroll: 0; clicks: 0", fixtureStatus())
-        val watch = requireNotNull(device.wait(Until.findObject(By.res("app.scrollguard", "guard_watch_shared")), 8_000L))
+        val watch = requireNotNull(device.wait(Until.findObject(By.res(targetPackage, "guard_watch_shared")), 8_000L))
         watch.click()
         assertTrue(device.wait(Until.hasObject(sharedBack), 8_000L))
         repeatFeedTouches()
@@ -658,7 +671,7 @@ class InstagramEnforcementTest {
     @Test fun ownProfileCanOpenThroughShield() {
         open("home")
         awaitLock()
-        device.findObject(By.res("app.scrollguard", "guard_profile")).click()
+        device.findObject(By.res(targetPackage, "guard_profile")).click()
         assertTrue(device.wait(Until.hasObject(By.text("Fixture profile")), 8_000L))
         assertTrue(device.wait(Until.gone(guardTitle), 8_000L))
     }
@@ -674,7 +687,7 @@ class InstagramEnforcementTest {
     @Test fun openingStoriesThroughFeedLockWaitsForConfirmedNativeStory() {
         open("home")
         awaitLock()
-        val stories = requireNotNull(device.wait(Until.findObject(By.res("app.scrollguard", "guard_stories")), 8_000L))
+        val stories = requireNotNull(device.wait(Until.findObject(By.res(targetPackage, "guard_stories")), 8_000L))
         assertTrue("Native top-row Story avatar must make the shield route available", stories.isEnabled)
         stories.click()
         assertTrue(device.wait(Until.hasObject(By.text("Fixture story")), 8_000L))
@@ -691,7 +704,7 @@ class InstagramEnforcementTest {
     @Test fun leavingInstagramRemovesShieldFromLauncher() {
         open("home")
         awaitLock()
-        device.findObject(By.res("app.scrollguard", "guard_leave")).click()
+        device.findObject(By.res(targetPackage, "guard_leave")).click()
         assertTrue(device.wait(Until.gone(guardTitle), 8_000L))
         awaitCondition { focusedApplicationPackage()?.let { it != "com.instagram.android" } == true }
     }
@@ -728,7 +741,7 @@ class InstagramEnforcementTest {
         device.executeShellCommand("settings put secure enabled_accessibility_services ''")
         awaitCondition { !ProtectionRuntime.state.value.connected }
         assertTrue(device.wait(Until.gone(guardTitle), 8_000L))
-        device.executeShellCommand("settings put secure enabled_accessibility_services app.scrollguard/app.scrollguard.services.ShortFormContentBlockerService")
+        device.executeShellCommand("settings put secure enabled_accessibility_services $targetPackage/app.scrollguard.services.ShortFormContentBlockerService")
         awaitCondition { ProtectionRuntime.state.value.connected && ProtectionRuntime.state.value.preferencesApplied }
         awaitLock()
         repeatFeedTouches()

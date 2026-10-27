@@ -47,7 +47,8 @@ extensions.configure<ApplicationExtension> {
         targetSdk = 36
         versionCode = mVersionCode
         versionName = mVersionName
-        applicationId = "app.scrollguard"
+        // Fresh side-by-side installation explicitly requested after the old signing key was lost.
+        applicationId = "app.scrollguard.fresh"
         testInstrumentationRunner = "androidx.test.runner.AndroidJUnitRunner"
     }
 

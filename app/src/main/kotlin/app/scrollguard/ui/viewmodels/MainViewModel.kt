@@ -17,6 +17,7 @@
 package app.scrollguard.ui.viewmodels
 
 import android.app.Application
+import android.content.ComponentName
 import android.content.Context
 import androidx.lifecycle.AndroidViewModel
 import androidx.lifecycle.viewModelScope
@@ -28,6 +29,7 @@ import app.scrollguard.services.ProtectionRuntimeState
 import app.scrollguard.services.DetectionDiagnostics
 import app.scrollguard.services.BlockStats
 import app.scrollguard.services.BlockStatsStore
+import app.scrollguard.services.ShortFormContentBlockerService
 import app.scrollguard.utils.AccessibilityServiceManager
 import app.scrollguard.utils.StrictModePolicy
 import app.scrollguard.utils.UserPreferencesProvider
@@ -75,10 +77,8 @@ class MainViewModel(
     application: Application,
 ) : AndroidViewModel(application) {
 
-    companion object {
-        private const val SERVICE_NAME: String =
-            "app.scrollguard/app.scrollguard.services.ShortFormContentBlockerService"
-    }
+    private val serviceName = ComponentName(application,
+        ShortFormContentBlockerService::class.java).flattenToString()
 
     private val userPreferencesProvider = UserPreferencesProvider(application)
     private val blockStatsStore = BlockStatsStore(application)
@@ -186,7 +186,7 @@ class MainViewModel(
 
             val isGranted = AccessibilityServiceManager.isAccessibilityServiceEnabled(
                 context,
-                SERVICE_NAME,
+                serviceName,
             )
 
             _serviceState.update {
