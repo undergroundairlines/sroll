@@ -10,6 +10,8 @@ The available input is a **base APK missing its required vendor density split**.
 
 `add_native_cases.py` modifies only upstream's test instrumentation. That evaluation delta is GPL-3.0-only, following the upstream runner's licence, with the upstream authors credited in the file. The original runner is fetched from its pinned repository, retaining its notices and licence. No HushGram production code is incorporated into Scroll Guard.
 
+The full GPL version 3 text is in `COPYING-GPL-3.0`. The delta is provided under GPL-3.0-only, without warranty.
+
 The additional native cases have deliberately limited claims:
 
 * `reel-input` loads the installed patched Instagram's actual ViewPager2 and HushGram extension. It registers one pager, invokes the actual patched input setter 50 times and reads its boolean field. It checks an unregistered pager and restores input with the switch off. The field mapping comes from the pinned vendor DEX, whose setter stores its boolean parameter in `ViewPager2.A09`; the public getter is stripped in this build. This tests the injected setter, not physical swipes on a signed-in Reel.

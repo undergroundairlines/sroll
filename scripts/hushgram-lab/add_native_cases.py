@@ -20,7 +20,8 @@ methods=r'''
         save(stop, true);
         Class<?> reel = loader.loadClass("app.hushgram.extension.instagram.reels.ReelScrolling");
         Class<?> pager = loader.loadClass("androidx.viewpager2.widget.ViewPager2");
-        java.util.concurrent.FutureTask<Boolean> task = new java.util.concurrent.FutureTask<>(() -> {
+        java.util.concurrent.FutureTask<Boolean> task = new java.util.concurrent.FutureTask<Boolean>(new java.util.concurrent.Callable<Boolean>() {
+          @Override public Boolean call() throws Exception {
             Object guarded = pager.getConstructor(Context.class).newInstance(target);
             Object ordinary = pager.getConstructor(Context.class).newInstance(target);
             Method setter = pager.getMethod("setUserInputEnabled", boolean.class);
@@ -47,6 +48,7 @@ methods=r'''
             out.putString(PREFIX+"reelInput.offRestoresInput", ""+restored);
             out.putString(PREFIX+"scope", "real patched setter; no signed-in feed or physical gestures");
             return initial && blocked && unrelated && restored;
+          }
         });
         new android.os.Handler(android.os.Looper.getMainLooper()).post(task);
         return task.get(30, java.util.concurrent.TimeUnit.SECONDS);
