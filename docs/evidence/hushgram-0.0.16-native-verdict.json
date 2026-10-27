@@ -1,0 +1,161 @@
+{
+  "timeUtc": "2026-10-27T19:58:20.6038875Z",
+  "serial": "emulator-5554",
+  "user": "10",
+  "isolatedUser": true,
+  "networkOff": true,
+  "target": {
+    "Package": "com.instagram.android",
+    "VersionName": "452.1.0.53.64",
+    "VersionCode": "385811006",
+    "Sha256": "9e38bb5ea8bf70995befe82dd82943ea7a7601da649f304eed2e8e86cacf4a56",
+    "SignerSha256": "cb2eab1bae5be0441b5e5fd4c2a9063a29949e4ac3374d73dc26dc9143e1e58f",
+    "BuildIdentity": "hg1:ae321e47c7336a8cb7c5b21da20a800688c489489f24ace6da78df5cb0628133",
+    "SelectionSha256": "2693fa9895cede98274d52e97d7e4ccad9c4fc552cdecaff1d404dd39733a3f6",
+    "AppliedPatches": 115
+  },
+  "cases": [
+    {
+      "Case": "bind",
+      "Verdict": "pass",
+      "MissingHook": "",
+      "Prerequisite": "",
+      "BuildIdentity": "",
+      "Error": "",
+      "Detail": "",
+      "Observed": {},
+      "Problems": []
+    },
+    {
+      "Case": "control-positive",
+      "Verdict": "pass",
+      "MissingHook": "",
+      "Prerequisite": "",
+      "BuildIdentity": "hg1:ae321e47c7336a8cb7c5b21da20a800688c489489f24ace6da78df5cb0628133",
+      "Error": "",
+      "Detail": "",
+      "Observed": {},
+      "Problems": []
+    },
+    {
+      "Case": "control-negative",
+      "Verdict": "fail",
+      "MissingHook": "app.hushgram.extension.nativerunner.AbsentHook",
+      "Prerequisite": "",
+      "BuildIdentity": "",
+      "Error": "",
+      "Detail": "",
+      "Observed": {},
+      "Problems": []
+    },
+    {
+      "Case": "reel-input",
+      "Verdict": "pass",
+      "MissingHook": "",
+      "Prerequisite": "",
+      "BuildIdentity": "",
+      "Error": "",
+      "Detail": "",
+      "Observed": {
+        "reelInput.blockedAfter50EnableAttempts": "true",
+        "reelInput.initial": "true",
+        "reelInput.offRestoresInput": "true",
+        "reelInput.unregisteredPagerUsable": "true",
+        "scope": "real patched setter; no signed-in feed or physical gestures"
+      },
+      "Problems": []
+    },
+    {
+      "Case": "home-filters",
+      "Verdict": "pass",
+      "MissingHook": "",
+      "Prerequisite": "",
+      "BuildIdentity": "",
+      "Error": "",
+      "Detail": "",
+      "Observed": {
+        "scope": "synthetic input objects; real APK helpers; no server feed parser or Story tray exercised",
+        "synthetic.CLIPS_NETEGO": "offRetains=true,onExpected=true",
+        "synthetic.HATCH_IMMERSIVE_IN_FEED_UNIT": "offRetains=true,onExpected=true",
+        "synthetic.IMMERSIVE_SEGUE_ITEM": "offRetains=true,onExpected=true",
+        "synthetic.MEDIA": "offRetains=true,onExpected=true",
+        "synthetic.VIBES_IN_FEED_UNIT": "offRetains=true,onExpected=true",
+        "synthetic.wholeHome": "offRetains=true,onRemoves=true"
+      },
+      "Problems": []
+    },
+    {
+      "Case": "presence",
+      "Verdict": "pass",
+      "MissingHook": "",
+      "Prerequisite": "",
+      "BuildIdentity": "",
+      "Error": "",
+      "Detail": "",
+      "Observed": {
+        "armed": "Pause and Hide your active status saved on for presence-paused",
+        "pause": "NONE",
+        "presence.incoming": "native",
+        "presence.incomingShown": "replaced",
+        "presence.notReady": "ACTIVE>ACTIVE",
+        "presence.off": "ACTIVE>ACTIVE,IDLE>IDLE,OFFLINE>OFFLINE,DISABLED>DISABLED",
+        "presence.on": "ACTIVE>IDLE,IDLE>IDLE,OFFLINE>OFFLINE,DISABLED>DISABLED",
+        "presence.serializer": "ACTIVE>ACTIVE",
+        "settingsReadyAtStart": "false"
+      },
+      "Problems": []
+    },
+    {
+      "Case": "presence-paused",
+      "Verdict": "pass",
+      "MissingHook": "",
+      "Prerequisite": "",
+      "BuildIdentity": "",
+      "Error": "",
+      "Detail": "",
+      "Observed": {
+        "pause": "SWITCH",
+        "presence.paused": "ACTIVE>ACTIVE"
+      },
+      "Problems": []
+    },
+    {
+      "Case": "visual",
+      "Verdict": "pass",
+      "MissingHook": "",
+      "Prerequisite": "",
+      "BuildIdentity": "",
+      "Error": "",
+      "Detail": "",
+      "Observed": {
+        "armed": "Pause and View DM photos and videos anonymously saved on for visual-paused",
+        "pause": "NONE",
+        "settingsReadyAtStart": "false",
+        "visual.build": "385811006",
+        "visual.cast": "rejected,rejected",
+        "visual.notReady": "native",
+        "visual.off": "native",
+        "visual.on": "held",
+        "visual.voice": "native"
+      },
+      "Problems": []
+    },
+    {
+      "Case": "visual-paused",
+      "Verdict": "pass",
+      "MissingHook": "",
+      "Prerequisite": "",
+      "BuildIdentity": "",
+      "Error": "",
+      "Detail": "",
+      "Observed": {
+        "pause": "SWITCH",
+        "visual.build": "385811006",
+        "visual.paused": "native"
+      },
+      "Problems": []
+    }
+  ],
+  "controlsProven": true,
+  "featuresPassed": true
+}

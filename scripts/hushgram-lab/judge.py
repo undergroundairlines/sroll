@@ -30,4 +30,3 @@ result['reason']='Read each result separately. A base-only client and anonymous 
 (root/'judgement.json').write_text(json.dumps(result,indent=2))
 print(json.dumps(result,indent=2))
 raise SystemExit(1 if result['outcome']=='FAIL' else 2)
-

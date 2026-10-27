@@ -30,4 +30,3 @@ with session.open(request,timeout=120) as response, output.open('wb') as file:
         hash.update(chunk);file.write(chunk)
 assert hash.hexdigest()=='897b023309e3e2d80a99babe57be0c02f247b58380b2453d4f0682997f9259cd', 'Stock bytes changed; reverify provenance before running'
 print(json.dumps({'source':url,'sha256':hash.hexdigest(),'bytes':total,'expectedPackage':'com.instagram.android','expectedVersion':'452.1.0.53.64','expectedVersionCode':385811006}))
-

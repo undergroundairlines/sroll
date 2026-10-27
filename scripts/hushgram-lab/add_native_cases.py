@@ -94,5 +94,3 @@ assert needle in s
 s=s.replace(needle,"$NativeRunnerFeatureCases = [ordered]@{ 'reel-input' = $null; 'home-filters' = $null; 'presence' = $null;",1)
 p.write_text(s)
 print('Added two evaluation-only cases; production extension/APK unchanged.')
-
-

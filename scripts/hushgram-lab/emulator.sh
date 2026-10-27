@@ -56,5 +56,3 @@ assert verdict['featuresPassed'], 'Read the per-case failures; install success i
 print('All native cases passed within their documented scopes; signed-in flows remain unverified.')
 PY
 adb logcat -d -b crash > evidence/crashes.txt
-
-

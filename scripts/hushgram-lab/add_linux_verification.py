@@ -28,5 +28,3 @@ if '<component group="org.bouncycastle" name="bc-jdk18on-bom" version="1.85">' n
     s=s.replace('</components>','<component group="org.bouncycastle" name="bc-jdk18on-bom" version="1.85">'+''.join(parts)+'</component>\n   </components>',1)
     ET.fromstring(s);p.write_text(s)
 print('Added three publisher-verified platform/test metadata entries; dependency verification remains strict.')
-
-

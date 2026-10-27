@@ -37,5 +37,3 @@ result=json.loads((evidence/'patch-result.json').read_text())
 assert result['success'] and not result['failedPatches']
 assert set(result['appliedPatches'])==set(names)
 print('Applied',len(names),'released patches; signing is a separate Android SDK step.')
-
-

@@ -22,4 +22,3 @@ Upstream's positive and negative identity controls remain enabled. Existing pres
 The source-test job preserves strict dependency verification. It adds only individually publisher-verified checksums absent from upstream metadata for Linux aapt2 and test BOM metadata. Fixture-dependent upstream tests can skip without the vendor's multi-build fixture set; actual counts including skips are recorded.
 
 Signed-in Home filtering, repeated physical swipes, opening a shared Reel, sending photos, messaging, Story viewing and Nothing OS behavior remain outside this anonymous lab until exercised in an actual signed-in session. Do not turn these limits into a claim of real-phone compatibility.
-
