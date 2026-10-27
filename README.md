@@ -1,3 +1,32 @@
+# Scroll Guard Fresh
+
+The user approved a **fresh side-by-side installation** after the original signing key could not
+be recovered. This branch packages the latest 0.4.6 enforcement fixes as **app.scrollguard.fresh**,
+labelled **Scroll Guard Fresh**. The legacy app and its local data stay in place; settings/history
+are not imported. Turn off the old app's accessibility service before enabling the Fresh service,
+so the old blocker cannot keep showing its popup.
+
+Download the APK from the **v0.4.6-fresh** release after verification completes. Enable restricted
+settings if Android requires it, complete disclosure/setup and enable **Scroll Guard Fresh** in
+Android Accessibility. Enable Instagram and **Protect Home from Reels** for selective protection;
+the default stronger feed-lock option intentionally blocks the entire Home feed, ordinary posts
+included. Photos/messages/Stories are tested with native synthetic UI; real Instagram compatibility
+still needs the short phone acceptance test below.
+
+The Fresh signing key is captured before emulator setup and verified after each APK-producing
+stage. Its encrypted recovery backup is saved before building and attached to the release; the
+private recovery key and a Windows-encrypted backup stay outside Git. No signing private key is
+stored in a public cache or uploaded unencrypted. Once enrolled, record the public signing
+fingerprint in scripts/signing/fresh-certificate.sha256. Subsequent builds must restore the same
+key with the private SCROLL_GUARD_FRESH_SIGNING_KEY_BASE64 repository secret; they fail rather than
+silently create another identity. The old compatible-update branch remains unchanged.
+
+The following documentation describes the enforcement implementation and legacy update history.
+Fresh installation is the exception above; legacy signing-certificate claims do not apply to its
+new identity. Its own delivered verification report is authoritative for package/signature.
+
+---
+
 # Scroll Guard
 
 Scroll Guard is a private, offline Android distraction blocker designed for Nothing OS and other

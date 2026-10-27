@@ -1,10 +1,9 @@
-name: Build Scroll Guard APK
+name: Build Scroll Guard Fresh APK
 
 on:
   workflow_dispatch:
   push:
-    branches: [main, scroll-guard, scroll-guard-message-fix]
-  pull_request:
+    branches: [codex/fresh-install-046]
 
 permissions:
   contents: read
@@ -27,36 +26,48 @@ jobs:
           java-version: 17
           cache: gradle
 
-      - name: Keep one signing key for future updates
-        uses: actions/cache@v4
-        with:
-          path: ~/.android/debug.keystore
-          key: scroll-guard-debug-signing-v1
-
-      - name: Pin the signing key before emulator setup
+      - name: Pin fresh signing key and encrypt its recovery backup
         id: signing
-        continue-on-error: true
         env:
-          SCROLL_GUARD_SIGNING_KEY_BASE64: ${{ secrets.SCROLL_GUARD_SIGNING_KEY_BASE64 }}
+          GH_TOKEN: ${{ github.token }}
+          SCROLL_GUARD_FRESH_SIGNING_KEY_BASE64: ${{ secrets.SCROLL_GUARD_FRESH_SIGNING_KEY_BASE64 }}
         run: |
           set -euo pipefail
-          mkdir -p "$HOME/.android" "$RUNNER_TEMP/scroll-guard-signing"
-          pinned_store="$RUNNER_TEMP/scroll-guard-signing/debug.keystore"
-          if [ -n "$SCROLL_GUARD_SIGNING_KEY_BASE64" ]; then
-            printf '%s' "$SCROLL_GUARD_SIGNING_KEY_BASE64" | base64 --decode > "$pinned_store"
-          elif [ -f "$HOME/.android/debug.keystore" ]; then
-            cp "$HOME/.android/debug.keystore" "$pinned_store"
+          umask 077
+          mkdir -p "$RUNNER_TEMP/scroll-guard-signing" "$RUNNER_TEMP/scroll-guard-fresh-backup"
+          pinned_store="$RUNNER_TEMP/scroll-guard-signing/fresh.p12"
+          if [ -n "$SCROLL_GUARD_FRESH_SIGNING_KEY_BASE64" ]; then
+            printf '%s' "$SCROLL_GUARD_FRESH_SIGNING_KEY_BASE64" | base64 --decode > "$pinned_store"
           else
-            echo "::error::The original Scroll Guard signing key is missing. Restore it as the SCROLL_GUARD_SIGNING_KEY_BASE64 repository secret. Tests will still run with temporary test signing, but no update APK will be published."
-            exit 1
+            # One explicitly authorised first installation. Never silently replace its key.
+            if [ -f scripts/signing/fresh-certificate.sha256 ] || gh release view v0.4.6-fresh --repo "$GITHUB_REPOSITORY" >/dev/null 2>&1; then
+              echo "::error::Restore the saved Fresh key using SCROLL_GUARD_FRESH_SIGNING_KEY_BASE64. Refusing to generate a replacement key."
+              exit 1
+            fi
+            keytool -genkeypair -keystore "$pinned_store" -storetype PKCS12 -storepass android -keypass android -alias androiddebugkey -keyalg RSA -keysize 4096 -validity 10000 -dname "CN=Scroll Guard Fresh,O=Scroll Guard,C=NZ"
           fi
           certificate=$(keytool -exportcert -keystore "$pinned_store" -storepass android -alias androiddebugkey | sha256sum | cut -d ' ' -f 1)
-          if [ "$certificate" != "5f9a5eccde1fc15e4c60cc8ce3de4eab317fac4770c7795cebc49200840ad0cf" ]; then
-            echo "::error::Restored signing key does not match the delivered 0.4.0 APK. Refusing an incompatible update."
+          if [ -f scripts/signing/fresh-certificate.sha256 ] && [ "$certificate" != "$(tr -d '[:space:]' < scripts/signing/fresh-certificate.sha256)" ]; then
+            echo "::error::Fresh signing key differs from the pinned installed-app certificate."
             exit 1
           fi
           echo "SCROLL_GUARD_SIGNING_STORE=$pinned_store" >> "$GITHUB_ENV"
-          echo "Confirmed installed-app signing certificate SHA-256: $certificate"
+          echo "SCROLL_GUARD_EXPECTED_CERTIFICATE=$certificate" >> "$GITHUB_ENV"
+          printf '%s\n' "$certificate" > "$RUNNER_TEMP/scroll-guard-fresh-backup/certificate.sha256"
+          keytool -exportcert -keystore "$pinned_store" -storepass android -alias androiddebugkey -file "$RUNNER_TEMP/scroll-guard-fresh-backup/app-signing-certificate.der"
+          # Only the public recovery certificate is in Git. Its private key is backed up
+          # privately outside this repository. The runner never uploads a plaintext key.
+          openssl cms -encrypt -binary -aes-256-cbc -in "$pinned_store" -out "$RUNNER_TEMP/scroll-guard-fresh-backup/signing-key.p12.cms" -outform DER scripts/signing/fresh-recovery-public.pem
+          cp scripts/signing/fresh-recovery-public.pem "$RUNNER_TEMP/scroll-guard-fresh-backup/recovery-public.pem"
+          echo "Fresh public signing certificate SHA-256: $certificate"
+
+      - name: Preserve encrypted signing backup before building
+        uses: actions/upload-artifact@v4
+        with:
+          name: scroll-guard-fresh-encrypted-signing-backup
+          path: ${{ runner.temp }}/scroll-guard-fresh-backup/
+          if-no-files-found: error
+          retention-days: 90
 
       - name: Set up Gradle
         uses: gradle/actions/setup-gradle@v4
@@ -132,18 +143,10 @@ jobs:
           if-no-files-found: warn
           retention-days: 14
 
-      - name: Preserve the same key in the signing cache
-        if: always()
-        run: |
-          if [ -f "$SCROLL_GUARD_SIGNING_STORE" ]; then
-            mkdir -p "$HOME/.android"
-            cp "$SCROLL_GUARD_SIGNING_STORE" "$HOME/.android/debug.keystore"
-          fi
-
       - name: Confirm the final deliverable identity
         run: |
           if [ '${{ steps.signing.outcome }}' != 'success' ]; then
-            echo "::error::Verification completed with temporary test signing. An update APK cannot be delivered until the original signing key is restored. Do not uninstall the installed app."
+            echo "::error::Fresh signing failed; no APK may be delivered. Restore the saved Fresh key rather than replacing it."
             exit 1
           fi
           bash scripts/verify-delivery-apk.sh app/build/outputs/apk/debug/app-debug.apk final-delivery
@@ -153,49 +156,49 @@ jobs:
       - name: Upload installable APK
         uses: actions/upload-artifact@v4
         with:
-          name: scroll-guard-debug-apk
+          name: scroll-guard-fresh-apk
           path: |
             app/build/outputs/apk/debug/app-debug.apk
             app/build/reports/delivery/final-delivery.txt
           if-no-files-found: error
           retention-days: 14
 
-      - name: Publish verified phone-download test APK
-        if: github.event_name == 'push' && github.ref == 'refs/heads/scroll-guard-message-fix'
+      - name: Publish verified fresh-install phone download
+        if: github.event_name == 'push' && github.ref == 'refs/heads/codex/fresh-install-046'
         env:
           GH_TOKEN: ${{ github.token }}
         run: |
           set -euo pipefail
-          # Check the exact APK once more immediately before copying/uploading it.
           bash scripts/verify-delivery-apk.sh app/build/outputs/apk/debug/app-debug.apk final-release
-          tag="v0.4.6-test-${GITHUB_SHA:0:7}"
+          tag="v0.4.6-fresh"
+          if gh release view "$tag" --repo "$GITHUB_REPOSITORY" >/dev/null 2>&1; then
+            echo "::error::This Fresh release already exists. Increment the version; never replace an installed release with a new key."
+            exit 1
+          fi
           mkdir -p "$RUNNER_TEMP/scroll-guard-delivery"
-          apk="$RUNNER_TEMP/scroll-guard-delivery/scroll-guard-0.4.6.apk"
-          report="$RUNNER_TEMP/scroll-guard-delivery/scroll-guard-0.4.6-verification.txt"
-          archive="$RUNNER_TEMP/scroll-guard-delivery/Scroll-Guard-0.4.6.zip"
+          apk="$RUNNER_TEMP/scroll-guard-delivery/scroll-guard-fresh-0.4.6.apk"
+          report="$RUNNER_TEMP/scroll-guard-delivery/scroll-guard-fresh-0.4.6-verification.txt"
+          archive="$RUNNER_TEMP/scroll-guard-delivery/Scroll-Guard-Fresh-0.4.6.zip"
           cp app/build/outputs/apk/debug/app-debug.apk "$apk"
           cp app/build/reports/delivery/final-release.txt "$report"
           cmp app/build/outputs/apk/debug/app-debug.apk "$apk"
           zip -j "$archive" "$apk" "$report"
-          # The ZIP is a permanent phone-download alternative and contains the exact verified APK.
-          unzip -p "$archive" scroll-guard-0.4.6.apk | cmp - "$apk"
+          unzip -p "$archive" scroll-guard-fresh-0.4.6.apk | cmp - "$apk"
           notes="$RUNNER_TEMP/scroll-guard-delivery/release-notes.md"
           cat > "$notes" <<'EOF'
-          Installable Scroll Guard 0.4.6 test update (app.scrollguard, versionCode 406).
+          Scroll Guard Fresh 0.4.6, versionCode 406, package app.scrollguard.fresh.
 
-          Download scroll-guard-0.4.6.apk directly on your Android phone, or extract Scroll-Guard-0.4.6.zip and open its APK. Install over your existing Scroll Guard; do not uninstall or clear data.
+          This is the newest enforcement implementation as a separately installed app, explicitly authorised after loss of the legacy signing key. It leaves the old Scroll Guard app and its data in place; history/settings are not migrated.
 
-          This update keeps active Home/Reels/Explore guards through empty or unrecognised trees and notification-shade suspension. Reused clip IDs cannot override explicit Home photos; hidden pages and split profile markers cannot unlock a feed. A current confirmed safe destination is required to release an existing guard. Earlier conversation, YouTube-watchdog and atomic preference fixes remain included. Existing data and Strict Mode deadlines remain intact.
+          Download scroll-guard-fresh-0.4.6.apk, or extract Scroll-Guard-Fresh-0.4.6.zip and open its APK. Turn OFF the old Scroll Guard accessibility service and turn ON Scroll Guard Fresh. If Android requires it, allow restricted settings from App info first. Complete the disclosure/setup. Enable Instagram and Protect Home from Reels for selective Home-media protection with messages, photo sending, profiles and Stories. Turning that option OFF uses the stronger entire-Home lock, including ordinary posts. Whole-Instagram blocking is a separate strongest fallback. Strict Mode retains its persistent 30-minute delay within this new installation.
 
-          Turn on "Protect Home from Reels". Confirmed Home videos and large unlabelled Home render surfaces are shielded even without Reel IDs. Android can hide a TextureView's real type behind plain View, so this conservative fallback can also cover unlabelled photos, friends' videos and animated Home content. Identified photos remain usable. "Skip this Home media" requests one native scroll and keeps the guard until current media has actually gone or is identified as a photo. Messages, photo sending and Stories keep separate rules. Inaccessible players may still get through. Entire-Home and whole-app locks and the persistent Strict Mode deadline are preserved.
+          Fixes include guarded-feed continuity through unknown/empty interface trees and notification-shade suspension, positive photo evidence before releasing an active Home guard, hidden-page rejection and shared ownership for profile markers. No-op navigation/scroll requests never prove a safe destination. No screen-time redesign or unrelated app support was added.
 
-          The final APK has been checked against the original 0.4.0 signing certificate. The attached verification report includes its SHA-256 checksum.
+          Verification: unit tests, lint, APK compilation and the full Android 15 synthetic accessibility/overlay instrumentation suite must pass before publication. Instrumentation checks native touch/scroll counters, messaging/photo sending, Stories, lifecycle recovery and Strict Mode. These are Android mechanics tests, not proof of compatibility with the phone's real Instagram/Nothing OS version. Selective Home-media detection remains best effort; custom inaccessible players can evade initial recognition and unlabelled Home photos/videos may be conservatively guarded.
 
-          Unit tests, lint and Android 15 instrumentation must pass before this download is published. Instrumentation uses a synthetic Instagram fixture and verifies Android accessibility mechanics; real Instagram and Nothing OS compatibility still require the documented phone acceptance test.
+          Phone check: open Home video/Reels and repeatedly swipe/tap; the protected feed must not move. Open messages and send text/photo, advance Stories, then return to a Home video and confirm relocking. Open the notification shade/launcher and confirm no Instagram shield covers them.
+
+          The verification text contains the exact delivered APK checksum, package, version, signing certificate and actual test totals. The CMS file is an encrypted private-key recovery backup, not an app to install; its decryption key stays private outside the repository. No plaintext signing material or synthetic Instagram fixture is included in the APK or install ZIP.
           EOF
-          if gh release view "$tag" --repo "$GITHUB_REPOSITORY" >/dev/null 2>&1; then
-            gh release upload "$tag" "$apk" "$report" "$archive" --repo "$GITHUB_REPOSITORY" --clobber
-          else
-            gh release create "$tag" "$apk" "$report" "$archive" --repo "$GITHUB_REPOSITORY" --target "$GITHUB_SHA" --prerelease --title "Scroll Guard 0.4.6 phone test (${GITHUB_SHA:0:7})" --notes-file "$notes"
-          fi
-          echo "Phone download: https://github.com/$GITHUB_REPOSITORY/releases/download/$tag/scroll-guard-0.4.6.apk" >> "$GITHUB_STEP_SUMMARY"
+          gh release create "$tag" "$apk" "$archive" "$report" "$RUNNER_TEMP/scroll-guard-fresh-backup/signing-key.p12.cms" "$RUNNER_TEMP/scroll-guard-fresh-backup/app-signing-certificate.der" --repo "$GITHUB_REPOSITORY" --target "$GITHUB_SHA" --prerelease --title "Scroll Guard Fresh 0.4.6" --notes-file "$notes"
+          echo "Phone download: https://github.com/$GITHUB_REPOSITORY/releases/download/$tag/scroll-guard-fresh-0.4.6.apk" >> "$GITHUB_STEP_SUMMARY"
