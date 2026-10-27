@@ -1,0 +1,11 @@
+{
+  "scope": "base-only",
+  "settingsUiConfirmed": false,
+  "instagramCrashObserved": true,
+  "nativeControlsProven": true,
+  "allNativeCasesPassed": true,
+  "signedInFlowsVerified": false,
+  "readyForPhone": false,
+  "outcome": "FAIL",
+  "reason": "Read each result separately. A base-only client and anonymous native cases cannot establish a working signed-in app."
+}
