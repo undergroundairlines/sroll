@@ -1,4 +1,4 @@
-name: HushGram released-source verification
+name: HushGram isolated Android evaluation
 on:
   push:
     branches: [codex/hushgram-emulator-lab]
@@ -16,6 +16,11 @@ jobs:
           repository: SysAdminDoc/HushGram
           ref: 1cf4d5628c6194ebccad015c4d33e022a77ed8e6
           persist-credentials: false
+          path: hushgram
+      - uses: actions/checkout@v4
+        with:
+          path: lab-repo
+          persist-credentials: false
       - uses: actions/setup-java@v4
         with:
           distribution: temurin
@@ -25,9 +30,13 @@ jobs:
         env:
           GITHUB_TOKEN: ${{ github.token }}
           GITHUB_ACTOR: ${{ github.actor }}
-        run: bash ./gradlew :extensions:instagram:testDebugUnitTest :patches:test --stacktrace
+        working-directory: hushgram
+        run: |
+          python3 ../lab-repo/scripts/hushgram-lab/add_linux_verification.py
+          bash ./gradlew :extensions:instagram:testDebugUnitTest :patches:test --stacktrace
       - name: Collect actual test counts including skips
         if: always()
+        working-directory: hushgram
         run: |
           mkdir -p verification
           python3 - <<'PY' | tee verification/test-counts.txt
@@ -46,9 +55,71 @@ jobs:
         with:
           name: hushgram-upstream-test-evidence
           path: |
-            verification/
-            extensions/instagram/build/reports/tests/
-            extensions/instagram/build/test-results/
-            patches/build/reports/tests/
-            patches/build/test-results/
+            hushgram/verification/
+            hushgram/extensions/instagram/build/reports/tests/
+            hushgram/extensions/instagram/build/test-results/
+            hushgram/patches/build/reports/tests/
+            hushgram/patches/build/test-results/
+          retention-days: 14
+
+  android-lab:
+    runs-on: ubuntu-latest
+    timeout-minutes: 45
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          persist-credentials: false
+      - uses: actions/checkout@v4
+        with:
+          repository: SysAdminDoc/HushGram
+          ref: 1cf4d5628c6194ebccad015c4d33e022a77ed8e6
+          path: hushgram
+          persist-credentials: false
+      - uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: 17
+      - name: Obtain pinned stock APK through its public guest download
+        run: |
+          mkdir -p evidence lab
+          python3 scripts/hushgram-lab/download_stock.py lab/stock.apk | tee evidence/stock-provenance.json
+      - name: Verify Meta signature and exact supported manifest before patching
+        run: |
+          set -euo pipefail
+          bt=$(find "$ANDROID_HOME/build-tools" -mindepth 1 -maxdepth 1 -type d | sort -V | tail -n 1)
+          "$bt/apksigner" verify --verbose --print-certs lab/stock.apk | tee evidence/stock-signature.txt
+          grep -qi '3a10c50c18ba937506c2875e9047be74f8fd8b86fae2ff9feaa50a81fcb4c014' evidence/stock-signature.txt
+          "$bt/aapt2" dump badging lab/stock.apk > evidence/stock-manifest.txt
+          grep -q "package: name='com.instagram.android' versionCode='385811006' versionName='452.1.0.53.64'" evidence/stock-manifest.txt
+      - name: Patch released build and sign with disposable emulator-only identity
+        run: |
+          set -euo pipefail
+          python3 scripts/hushgram-lab/prepare.py
+          bt=$(find "$ANDROID_HOME/build-tools" -mindepth 1 -maxdepth 1 -type d | sort -V | tail -n 1)
+          keytool -genkeypair -keystore lab/lab.p12 -storetype PKCS12 -storepass android -keypass android -alias lab -keyalg RSA -keysize 2048 -validity 30 -dname "CN=Disposable HushGram Emulator Lab"
+          "$bt/apksigner" sign --ks lab/lab.p12 --ks-key-alias lab --ks-pass pass:android --key-pass pass:android lab/patched.apk
+          "$bt/apksigner" verify --verbose --print-certs lab/patched.apk > evidence/patched-signature.txt
+          "$bt/aapt2" dump badging lab/patched.apk > evidence/patched-manifest.txt
+          sha256sum lab/patched.apk > evidence/patched-sha256.txt
+          pwsh -NoProfile -Command '. ./hushgram/scripts/patch-record.ps1; Write-PatchRecord -Apk lab/patched.apk -Result evidence/patch-result.json -Path evidence/patch-record.json'
+          python3 scripts/hushgram-lab/add_native_cases.py
+      - name: Enable emulator acceleration
+        run: sudo chmod 666 /dev/kvm
+      - name: Exercise actual patched APK and native hooks on an offline emulator
+        uses: reactivecircus/android-emulator-runner@v2
+        with:
+          api-level: 35
+          target: google_apis
+          arch: x86_64
+          profile: pixel_6
+          disk-size: 8192M
+          emulator-options: -no-window -gpu swiftshader_indirect -noaudio -no-boot-anim -camera-back none -partition-size 8192
+          disable-animations: true
+          script: bash scripts/hushgram-lab/emulator.sh
+      - name: Upload evidence only; no Instagram APKs or signing keys
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: hushgram-offline-emulator-evidence
+          path: evidence/
           retention-days: 14
