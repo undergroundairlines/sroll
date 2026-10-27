@@ -6,7 +6,7 @@ labelled **Scroll Guard Fresh**. The legacy app and its local data stay in place
 are not imported. Turn off the old app's accessibility service before enabling the Fresh service,
 so the old blocker cannot keep showing its popup.
 
-Download the APK from the **v0.4.6-fresh** release after verification completes. Enable restricted
+Download the verified APK from the [v0.4.6-fresh release](https://github.com/undergroundairlines/sroll/releases/tag/v0.4.6-fresh). Enable restricted
 settings if Android requires it, complete disclosure/setup and enable **Scroll Guard Fresh** in
 Android Accessibility. Enable Instagram and **Protect Home from Reels** for selective protection;
 the default stronger feed-lock option intentionally blocks the entire Home feed, ordinary posts
@@ -20,6 +20,8 @@ stored in a public cache or uploaded unencrypted. Once enrolled, record the publ
 fingerprint in scripts/signing/fresh-certificate.sha256. Subsequent builds must restore the same
 key with the private SCROLL_GUARD_FRESH_SIGNING_KEY_BASE64 repository secret; they fail rather than
 silently create another identity. The old compatible-update branch remains unchanged.
+
+The [full HushGram comparison](docs/hushgram-comparison-2026-10-28.md) explains the important architectural differences and current feature gaps.
 
 The following documentation describes the enforcement implementation and legacy update history.
 Fresh installation is the exception above; legacy signing-certificate claims do not apply to its
@@ -203,12 +205,13 @@ and contain no captions, messages, usernames, or account content.
 
 ## Install a test build
 
-1. Download the supplied `scroll-guard-0.4.6.apk` on the phone and install **over** the existing app.
-   Do not uninstall or clear data. The package is `app.scrollguard`, versionCode **406**.
-2. On recent Android versions, open **App info** for Scroll Guard. If Android blocks the
+1. Download `scroll-guard-fresh-0.4.6.apk` on the phone and install it as a separate app.
+   Leave the old app/data in place. The new package is `app.scrollguard.fresh`, versionCode **406**.
+2. On recent Android versions, open **App info** for Scroll Guard Fresh. If Android blocks the
    accessibility permission for a sideloaded app, open the three-dot menu and choose
    **Allow restricted settings**.
-3. Open Scroll Guard, read the disclosure, and enable its accessibility service.
+3. Turn OFF the old Scroll Guard accessibility service. Open Scroll Guard Fresh, read the
+   disclosure, and enable the **Scroll Guard Fresh** accessibility service.
 4. Enable YouTube, Instagram, or TikTok from the app.
 5. Confirm **Phone protection check** says service connected and preferences applied. If Nothing OS
    stops the service, reopen Android Accessibility settings and re-enable Scroll Guard. Check the
