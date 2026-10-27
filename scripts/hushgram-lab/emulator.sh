@@ -44,6 +44,8 @@ adb shell am force-stop com.instagram.android
 serial=$(adb get-serialno | tr -d '\r')
 model=$(adb shell getprop ro.product.model | tr -d '\r')
 avd=$(adb emu avd name | head -n 1 | tr -d '\r')
+export HUSHGRAM_DEVICE_LEASE_DIR="$RUNNER_TEMP/hushgram-device-leases"
+mkdir -p "$HUSHGRAM_DEVICE_LEASE_DIR"
 pwsh -NoProfile -File hushgram/scripts/native-runner.ps1 -Serial "$serial" -ExpectedModel "$model" -ExpectedAvd "$avd" -TargetApk "$PWD/lab/patched.apk" -Report "$PWD/evidence/patch-result.json" -Record "$PWD/evidence/patch-record.json" -Keystore "$PWD/lab/lab.p12" -KeyAlias lab -KeystorePassword android -KeyPassword android -Sdk "$ANDROID_HOME" -Verdict "$PWD/evidence/native-verdict.json" 2>&1 | tee evidence/native-runner.log
 python3 - <<'PY'
 import json
