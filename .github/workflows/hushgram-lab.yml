@@ -1,0 +1,54 @@
+name: HushGram released-source verification
+on:
+  push:
+    branches: [codex/hushgram-emulator-lab]
+  workflow_dispatch:
+permissions:
+  contents: read
+  packages: read
+jobs:
+  upstream-tests:
+    runs-on: ubuntu-latest
+    timeout-minutes: 40
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          repository: SysAdminDoc/HushGram
+          ref: 1cf4d5628c6194ebccad015c4d33e022a77ed8e6
+          persist-credentials: false
+      - uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: 17
+      - uses: gradle/actions/setup-gradle@v4
+      - name: Run released HushGram runtime and patch tests
+        env:
+          GITHUB_TOKEN: ${{ github.token }}
+          GITHUB_ACTOR: ${{ github.actor }}
+        run: ./gradlew :extensions:instagram:testDebugUnitTest :patches:test --stacktrace
+      - name: Collect actual test counts including skips
+        if: always()
+        run: |
+          mkdir -p verification
+          python3 - <<'PY' | tee verification/test-counts.txt
+          import glob, xml.etree.ElementTree as ET
+          for directory in ['extensions/instagram','patches']:
+              totals=dict(tests=0, failures=0, errors=0, skipped=0)
+              files=glob.glob(directory+'/build/test-results/**/TEST-*.xml',recursive=True)
+              for file in files:
+                  root=ET.parse(file).getroot()
+                  for key in totals: totals[key]+=int(root.get(key,0))
+              print(directory, 'xml_files='+str(len(files)),totals)
+          print('Fixture-dependent tests without a stock Instagram APK may skip. These are upstream unit tests, not Android emulator or signed-in Instagram evidence.')
+          PY
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: hushgram-upstream-test-evidence
+          path: |
+            verification/
+            extensions/instagram/build/reports/tests/
+            extensions/instagram/build/test-results/
+            patches/build/reports/tests/
+            patches/build/test-results/
+          retention-days: 14
