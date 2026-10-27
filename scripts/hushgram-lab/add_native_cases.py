@@ -24,18 +24,23 @@ methods=r'''
             Object guarded = pager.getConstructor(Context.class).newInstance(target);
             Object ordinary = pager.getConstructor(Context.class).newInstance(target);
             Method setter = pager.getMethod("setUserInputEnabled", boolean.class);
-            Method getter = pager.getMethod("isUserInputEnabled");
+            // Verified from this pinned stock APK's actual DEX: setUserInputEnabled
+            // stores its boolean parameter in ViewPager2.A09. The public getter is stripped.
+            if (target.getPackageManager().getPackageInfo(target.getPackageName(),0).getLongVersionCode()!=385811006L)
+                throw new IllegalStateException("Unmapped pager field for this APK");
+            Field input = pager.getDeclaredField("A09");
+            input.setAccessible(true);
             setter.invoke(guarded, true);
-            boolean initial = (Boolean) getter.invoke(guarded);
+            boolean initial = input.getBoolean(guarded);
             reel.getMethod("pager", Object.class).invoke(null, guarded);
             // Do not apply the helper's return value ourselves: the injected setter must act.
             for (int i=0; i<50; i++) setter.invoke(guarded, true);
-            boolean blocked = !(Boolean) getter.invoke(guarded);
+            boolean blocked = !input.getBoolean(guarded);
             setter.invoke(ordinary, true);
-            boolean unrelated = (Boolean) getter.invoke(ordinary);
+            boolean unrelated = input.getBoolean(ordinary);
             save(stop, false);
             setter.invoke(guarded, true);
-            boolean restored = (Boolean) getter.invoke(guarded);
+            boolean restored = input.getBoolean(guarded);
             out.putString(PREFIX+"reelInput.initial", ""+initial);
             out.putString(PREFIX+"reelInput.blockedAfter50EnableAttempts", ""+blocked);
             out.putString(PREFIX+"reelInput.unregisteredPagerUsable", ""+unrelated);
@@ -87,4 +92,5 @@ assert needle in s
 s=s.replace(needle,"$NativeRunnerFeatureCases = [ordered]@{ 'reel-input' = $null; 'home-filters' = $null; 'presence' = $null;",1)
 p.write_text(s)
 print('Added two evaluation-only cases; production extension/APK unchanged.')
+
 
